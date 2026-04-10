@@ -1,0 +1,22 @@
+{
+  "from_name": "Sympo of Thetford",
+  "password-reset": {
+    "subject": "Password Reset Request",
+    "heading": "Reset your password",
+    "body": "We received a request to reset the password for your <i>{{ projectName }}</i> account. If you did not make this request, please contact an administrator.",
+    "cta": "Reset Your Password",
+    "expiry_notice": "Important: This link will expire in 24 hours."
+  },
+  "user-invitation": {
+    "subject": "You have been invited",
+    "heading": "You've been invited to {{ projectName }}",
+    "body": "You have been invited to join <i>{{ projectName }}</i>. Click the button below to accept this invitation.",
+    "cta": "Accept Invitation"
+  },
+  "user-registration": {
+    "subject": "Verify your email address",
+    "heading": "Verify your email address",
+    "body": "Thanks for registering at <i>{{ projectName }}</i>. To complete your registration, verify your email address by clicking the link below.",
+    "cta": "Verify Email"
+  }
+}
