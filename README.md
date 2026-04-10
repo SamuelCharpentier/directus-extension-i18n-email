@@ -47,11 +47,14 @@ Translation is **always applied** regardless of whether the user's language matc
 
 ## Environment Variables
 
-Make sure to set `EMAIL_TEMPLATES_PATH` and `EMAIL_FROM` accordingly with Directus documentation on [email configuration](https://docs.directus.io/configuration/email.html#configuration-options). `I18N_FALLBACK_LANG` is optional and only used if `default_language` is `null`.
+Configure `EMAIL_TEMPLATES_PATH` and `EMAIL_FROM` as described in the [Directus email documentation](https://docs.directus.io/configuration/email.html#configuration-options), placing your templates in the usual Directus templates folder.
 
-| Variable             | Required | Default | Description                                                              |
-| -------------------- | -------- | ------- | ------------------------------------------------------------------------ |
-| `I18N_FALLBACK_LANG` | No       | `en`    | Language code to use when `directus_settings.default_language` is `null` |
+The following variables are specific to this extension:
+
+| Variable                      | Default | Description                                                                                                      |
+| ----------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------- |
+| `I18N_EMAIL_FALLBACK_FROM_NAME` | —     | Fallback sender display name when none is set in the locale file. Falls back to `directus_settings.project_name` |
+| `I18N_EMAIL_FALLBACK_LANG`    | `en`    | Language code to use when `directus_settings.default_language` is `null`                                         |
 
 <br />
 
@@ -160,7 +163,7 @@ The effective language for each email is resolved as:
 
 1. **User language** — the `language` field on the recipient's `directus_users` record (primary tag only, e.g. `fr` from `fr-CA`).
 2. **Default language** — `directus_settings.default_language` (primary tag only).
-3. **`I18N_FALLBACK_LANG`** env variable — used if `default_language` is `null`.
+3. **`I18N_EMAIL_FALLBACK_LANG`** env variable — used if `default_language` is `null`.
 4. **`en`** — hardcoded last resort.
 
 The locale file for the user's language is tried first. If it doesn't exist, the default-language file is used. If that doesn't exist either, no translations are applied.
