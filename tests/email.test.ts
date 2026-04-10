@@ -29,8 +29,12 @@ describe('extractRecipientEmail', () => {
 		).toBe('user@example.com');
 	});
 
-	it('returns empty string when address is unavailable', () => {
-		expect(extractRecipientEmail(undefined as any)).toBe('');
+	it('returns null when address is unavailable', () => {
+		expect(extractRecipientEmail(undefined as any)).toBeNull();
+	});
+
+	it('returns null when array element has no address property', () => {
+		expect(extractRecipientEmail([{} as any])).toBeNull();
 	});
 });
 
@@ -119,6 +123,16 @@ describe('applyTranslationsToEmail', () => {
 
 		expect(email.template!.data.i18n).not.toHaveProperty('subject');
 		expect(email.template!.data.i18n).not.toHaveProperty('from_name');
+	});
+
+	it('excludes keys with non-string values from i18n template data', () => {
+		const email = makeEmail();
+		const trans: TemplateTrans = { cta: 'Click', broken: undefined };
+
+		applyTranslationsToEmail(email, trans, 'info@example.com');
+
+		expect(email.template!.data.i18n).toHaveProperty('cta', 'Click');
+		expect(email.template!.data.i18n).not.toHaveProperty('broken');
 	});
 
 	it('does not modify template.data when email has no template', () => {

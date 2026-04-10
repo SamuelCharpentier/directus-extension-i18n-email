@@ -126,4 +126,14 @@ describe('extractTemplateTrans', () => {
 
 		expect(result).toBeNull();
 	});
+
+	it('does not inject from_name when locale.from_name is not a string', () => {
+		const locale: LocaleData = {
+			'password-reset': { subject: 'Reset' },
+		};
+
+		const result = extractTemplateTrans(locale, 'password-reset');
+
+		expect(result!.from_name).toBeUndefined();
+	});
 });

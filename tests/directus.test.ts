@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { fetchDefaultLang, fetchUserLang } from '../src/directus';
+import { fetchDefaultLang, fetchProjectName, fetchUserLang } from '../src/directus';
 import type { ExtensionsServices, SchemaOverview } from '@directus/types';
 
 const SCHEMA = {} as SchemaOverview;
@@ -42,18 +42,22 @@ describe('fetchDefaultLang', () => {
 		expect(await fetchDefaultLang(services, SCHEMA, {})).toBe('en');
 	});
 
-	it('uses I18N_FALLBACK_LANG env variable when default_language is null', async () => {
+	it('uses I18N_EMAIL_FALLBACK_LANG env variable when default_language is null', async () => {
 		const { SettingsService } = makeSettingsService({ default_language: null });
 		const services = { SettingsService } as unknown as ExtensionsServices;
 
-		expect(await fetchDefaultLang(services, SCHEMA, { I18N_FALLBACK_LANG: 'fr' })).toBe('fr');
+		expect(await fetchDefaultLang(services, SCHEMA, { I18N_EMAIL_FALLBACK_LANG: 'fr' })).toBe(
+			'fr',
+		);
 	});
 
-	it('ignores I18N_FALLBACK_LANG when default_language is set', async () => {
+	it('ignores I18N_EMAIL_FALLBACK_LANG when default_language is set', async () => {
 		const { SettingsService } = makeSettingsService({ default_language: 'de' });
 		const services = { SettingsService } as unknown as ExtensionsServices;
 
-		expect(await fetchDefaultLang(services, SCHEMA, { I18N_FALLBACK_LANG: 'fr' })).toBe('de');
+		expect(await fetchDefaultLang(services, SCHEMA, { I18N_EMAIL_FALLBACK_LANG: 'fr' })).toBe(
+			'de',
+		);
 	});
 
 	it('instantiates SettingsService with accountability: null', async () => {
@@ -105,6 +109,40 @@ describe('fetchUserLang', () => {
 
 		expect(ItemsService).toHaveBeenCalledWith(
 			'directus_users',
+			expect.objectContaining({ accountability: null }),
+		);
+	});
+});
+
+describe('fetchProjectName', () => {
+	it('returns the project name from settings', async () => {
+		const { SettingsService } = makeSettingsService({ project_name: 'My Project' });
+		const services = { SettingsService } as unknown as ExtensionsServices;
+
+		expect(await fetchProjectName(services, SCHEMA)).toBe('My Project');
+	});
+
+	it('returns null when project_name is null', async () => {
+		const { SettingsService } = makeSettingsService({ project_name: null });
+		const services = { SettingsService } as unknown as ExtensionsServices;
+
+		expect(await fetchProjectName(services, SCHEMA)).toBeNull();
+	});
+
+	it('returns null when project_name is an empty string', async () => {
+		const { SettingsService } = makeSettingsService({ project_name: '' });
+		const services = { SettingsService } as unknown as ExtensionsServices;
+
+		expect(await fetchProjectName(services, SCHEMA)).toBeNull();
+	});
+
+	it('instantiates SettingsService with accountability: null', async () => {
+		const { SettingsService } = makeSettingsService({ project_name: 'Test' });
+		const services = { SettingsService } as unknown as ExtensionsServices;
+
+		await fetchProjectName(services, SCHEMA);
+
+		expect(SettingsService).toHaveBeenCalledWith(
 			expect.objectContaining({ accountability: null }),
 		);
 	});
