@@ -15,14 +15,14 @@
 	},
 	"user-invitation": {
 		"subject": "Vous avez été invité(e)",
-		"heading": "Vous avez été invité(e) à rejoindre {{ projectName }}",
-		"body": "Vous avez été invité(e) à rejoindre <i>{{ projectName }}</i>. Cliquez sur le bouton ci-dessous pour accepter cette invitation.",
+		"heading": "Vous avez été invité(e)!",
+		"body": "Vous avez été invité(e) à rejoindre notre plateforme. Cliquez sur le bouton ci-dessous pour accepter cette invitation.",
 		"cta": "Accepter l'invitation"
 	},
 	"user-registration": {
 		"subject": "Vérifiez votre adresse courriel",
 		"heading": "Vérifiez votre adresse courriel",
-		"body": "Merci de vous être inscrit(e) sur <i>{{ projectName }}</i>. Pour compléter votre inscription, veuillez vérifier votre adresse courriel en cliquant sur le lien ci-dessous.",
+		"body": "Merci de vous être inscrit(e). Pour compléter votre inscription, veuillez vérifier votre adresse courriel en cliquant sur le lien ci-dessous.",
 		"cta": "Vérifier mon courriel"
 	}
 }

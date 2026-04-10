@@ -118,6 +118,7 @@ Each locale file is a JSON object with an optional top-level `from_name` and one
 - Any other keys (e.g. `heading`, `body`, `cta`) become available in the template as `{{ i18n.heading }}`, `{{ i18n.body }}`, etc.
 - `subject` and `from_name` are **not** injected into the `i18n` object — they are applied to the email metadata directly.
 - If a locale file for the user's language is not found, the default-language file is tried. If neither exists, the email is sent with no changes.
+- **Locale string values are plain text — Liquid templating is not supported inside JSON locale values.** Variables like `{{ projectName }}` written inside a locale string will be passed through literally and will not be rendered. Use static text only.
 
 <br />
 
@@ -147,9 +148,9 @@ Each email type has a single shared `.liquid` template. Translated content is ma
 
 | Variable            | Source      | Description                                      |
 | ------------------- | ----------- | ------------------------------------------------ |
-| `{{ i18n.* }}`      | Locale file | Any key defined in the template's locale section |
+| `{{ i18n.* }}`      | Locale file | Any key defined in the template's locale section — **plain text only, no Liquid inside locale values** |
 | `{{ url }}`         | Directus    | Action URL (reset link, invitation link, etc.)   |
-| `{{ projectName }}` | Directus    | Project name from settings                       |
+| `{{ projectName }}` | Directus    | Project name from settings — use this directly in `.liquid` templates, not inside JSON locale strings |
 
 <br />
 

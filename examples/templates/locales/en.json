@@ -15,14 +15,14 @@
 	},
 	"user-invitation": {
 		"subject": "You have been invited",
-		"heading": "You've been invited to {{ projectName }}",
-		"body": "You have been invited to join <i>{{ projectName }}</i>. Click the button below to accept this invitation.",
+		"heading": "You've been invited!",
+		"body": "You have been invited to join. Click the button below to accept this invitation.",
 		"cta": "Accept Invitation"
 	},
 	"user-registration": {
 		"subject": "Verify your email address",
 		"heading": "Verify your email address",
-		"body": "Thanks for registering at <i>{{ projectName }}</i>. To complete your registration, verify your email address by clicking the link below.",
+		"body": "Thanks for registering. To complete your registration, verify your email address by clicking the link below.",
 		"cta": "Verify Email"
 	}
 }
