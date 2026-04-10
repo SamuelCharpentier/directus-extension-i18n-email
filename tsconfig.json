@@ -1,5 +1,6 @@
 {
 	"compilerOptions": {
+		"ignoreDeprecations": "6.0",
 		"target": "ES2019",
 		"lib": ["ES2019", "DOM"],
 		"moduleResolution": "node",
@@ -21,8 +22,7 @@
 		"skipLibCheck": true,
 		"forceConsistentCasingInFileNames": true,
 		"allowSyntheticDefaultImports": true,
-		"isolatedModules": true,
-		"rootDir": "./src"
+		"isolatedModules": true
 	},
 	"include": ["./src/**/*.ts", "./tests/**/*.ts"]
 }
