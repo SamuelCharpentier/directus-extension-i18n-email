@@ -172,7 +172,6 @@ describe('email.send filter', () => {
 	});
 
 	it('uses empty string for EMAIL_FROM when env var is missing', async () => {
-		const filter = vi.fn();
 		const logger = { error: vi.fn() };
 		const getSchema = vi.fn().mockResolvedValue({});
 		let cb: ((input: EmailOptions) => Promise<EmailOptions>) | undefined;
