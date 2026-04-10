@@ -19,10 +19,6 @@ function extractAddressFromEnv(emailFrom: string): string {
 	return match ? match[1]! : emailFrom.trim();
 }
 
-function buildSenderWithName(name: string, address: string): string {
-	return `${name} <${address}>`;
-}
-
 export function applyTranslationsToEmail(
 	email: EmailOptions,
 	trans: TemplateTrans,
@@ -34,13 +30,17 @@ export function applyTranslationsToEmail(
 
 	if (trans.from_name) {
 		const address = extractAddressFromEnv(fromEnv);
-		email.from = buildSenderWithName(trans.from_name, address);
+		// Cast needed: EmailOptions types `from` as string, but nodemailer
+		// accepts the Address object form and handles RFC 5322 encoding correctly.
+		(email as any).from = { name: trans.from_name, address };
 	}
 
 	if (email.template) {
 		const i18n = Object.fromEntries(
-			Object.entries(trans)
-				.filter(([key, value]) => key !== 'subject' && key !== 'from_name' && typeof value === 'string'),
+			Object.entries(trans).filter(
+				([key, value]) =>
+					key !== 'subject' && key !== 'from_name' && typeof value === 'string',
+			),
 		);
 		email.template.data = { ...email.template.data, i18n };
 	}

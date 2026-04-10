@@ -10,7 +10,11 @@ function isSystemTemplate(name: string): name is (typeof SYSTEM_EMAIL_TEMPLATES)
 }
 
 const hook: HookConfig = ({ filter }, { services, logger, getSchema, env }) => {
+	logger.info('[i18n-email] Hook registered');
 	filter('email.send', async (input: EmailOptions) => {
+		logger.info(
+			`[i18n-email] email.send triggered, template: ${input.template?.name ?? 'none'}`,
+		);
 		if (!input.template || !isSystemTemplate(input.template.name)) {
 			return input;
 		}
@@ -25,11 +29,17 @@ const hook: HookConfig = ({ filter }, { services, logger, getSchema, env }) => {
 				fetchProjectName(services, schema),
 			]);
 			const effectiveLang = userLang ?? defaultLang;
+			logger.info(
+				`[i18n-email] effectiveLang: ${effectiveLang}, templatesPath: ${env['EMAIL_TEMPLATES_PATH']}`,
+			);
 			const templatesPath =
 				typeof env['EMAIL_TEMPLATES_PATH'] === 'string' ? env['EMAIL_TEMPLATES_PATH'] : '';
 			const locale = await resolveLocale(templatesPath, effectiveLang, defaultLang);
 
-			if (!locale) return input;
+			if (!locale) {
+				logger.warn('[i18n-email] No locale file found, skipping translation');
+				return input;
+			}
 
 			const trans = extractTemplateTrans(locale, input.template.name);
 

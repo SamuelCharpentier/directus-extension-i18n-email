@@ -72,7 +72,7 @@ describe('applyTranslationsToEmail', () => {
 
 		applyTranslationsToEmail(email, trans, 'info@example.com');
 
-		expect(email.from).toBe('Sympo de Thetford <info@example.com>');
+		expect(email.from).toEqual({ name: 'Sympo de Thetford', address: 'info@example.com' });
 	});
 
 	it('sets from with translated name and address extracted from a "Name <email>" env value', () => {
@@ -81,7 +81,7 @@ describe('applyTranslationsToEmail', () => {
 
 		applyTranslationsToEmail(email, trans, 'Old Name <info@example.com>');
 
-		expect(email.from).toBe('Sympo de Thetford <info@example.com>');
+		expect(email.from).toEqual({ name: 'Sympo de Thetford', address: 'info@example.com' });
 	});
 
 	it('does not set from when from_name is absent', () => {

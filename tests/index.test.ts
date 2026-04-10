@@ -40,7 +40,7 @@ function setupHook() {
 	const filter = vi.fn((_event: string, cb: typeof filterCallback) => {
 		filterCallback = cb;
 	});
-	const logger = { error: vi.fn() };
+	const logger = { error: vi.fn(), info: vi.fn(), warn: vi.fn() };
 	const getSchema = vi.fn().mockResolvedValue({});
 	const env = { EMAIL_TEMPLATES_PATH: '/templates', EMAIL_FROM: 'noreply@example.com' };
 
@@ -64,7 +64,12 @@ describe('hook filter registration', () => {
 		const filter = vi.fn();
 		hook(
 			{ filter } as any,
-			{ services: {} as any, logger: { error: vi.fn() }, getSchema: vi.fn(), env: {} } as any,
+			{
+				services: {} as any,
+				logger: { error: vi.fn(), info: vi.fn(), warn: vi.fn() },
+				getSchema: vi.fn(),
+				env: {},
+			} as any,
 		);
 		expect(filter).toHaveBeenCalledWith('email.send', expect.any(Function));
 	});
@@ -150,7 +155,7 @@ describe('email.send filter', () => {
 			{ filter: filter2 } as any,
 			{
 				services: {} as any,
-				logger: { error: vi.fn() },
+				logger: { error: vi.fn(), info: vi.fn(), warn: vi.fn() },
 				getSchema: vi.fn().mockResolvedValue({}),
 				env: { EMAIL_FROM: 'a@b.com', I18N_EMAIL_FALLBACK_FROM_NAME: 'Env Name' },
 			} as any,
@@ -258,7 +263,7 @@ describe('email.send filter', () => {
 	});
 
 	it('uses empty string for EMAIL_FROM when env var is missing', async () => {
-		const logger = { error: vi.fn() };
+		const logger = { error: vi.fn(), info: vi.fn(), warn: vi.fn() };
 		const getSchema = vi.fn().mockResolvedValue({});
 		let cb: ((input: EmailOptions) => Promise<EmailOptions>) | undefined;
 		const filter2 = vi.fn((_e: string, c: typeof cb) => {
