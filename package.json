@@ -1,10 +1,10 @@
 {
-	"name": "directus-extension-system-email-i18n",
+	"name": "directus-extension-i18n-email",
 	"version": "1.1.11",
-	"description": "Directus CMS extension to translate system emails (password reset, user registration and invitation)",
+	"description": "Directus CMS extension to translate emails (password reset, user registration and invitation)",
 	"author": {
-		"email": "code@jekuer.com",
-		"name": "Jens Kuerschner"
+		"email": "scharpentier0@gmail.com",
+		"name": "Samuel Charpentier"
 	},
 	"license": "MIT",
 	"icon": "translate",
@@ -19,16 +19,16 @@
 	],
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/jekuer/directus-extension-system-email-i18n.git"
+		"url": "git+https://github.com/SamuelCharpentier/directus-extension-i18n-email.git"
 	},
 	"bugs": {
-		"url": "https://github.com/jekuer/directus-extension-system-email-i18n/issues"
+		"url": "https://github.com/SamuelCharpentier/directus-extension-i18n-email/issues"
 	},
 	"publishConfig": {
 		"access": "public",
 		"registry": "https://registry.npmjs.org"
 	},
-	"homepage": "https://github.com/jekuer/directus-extension-system-email-i18n",
+	"homepage": "https://github.com/SamuelCharpentier/directus-extension-i18n-email",
 	"type": "module",
 	"files": [
 		"dist"
