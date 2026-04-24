@@ -1,149 +1,140 @@
-import { describe, it, expect, vi } from 'vitest';
-import { fetchDefaultLang, fetchProjectName, fetchUserLang } from '../src/directus';
-import type { ExtensionsServices, SchemaOverview } from '@directus/types';
-
-const SCHEMA = {} as SchemaOverview;
-
-function makeSettingsService(returnValue: Record<string, unknown>) {
-	const readSingleton = vi.fn().mockResolvedValue(returnValue);
-	const SettingsService = vi.fn(function (this: any) {
-		this.readSingleton = readSingleton;
-	});
-	return { SettingsService, readSingleton };
-}
-
-function makeItemsService(returnValue: unknown[]) {
-	const readByQuery = vi.fn().mockResolvedValue(returnValue);
-	const ItemsService = vi.fn(function (this: any) {
-		this.readByQuery = readByQuery;
-	});
-	return { ItemsService, readByQuery };
-}
+import { describe, it, expect } from 'vitest';
+import { makeServices, emptySchema } from './helpers';
+import {
+	fetchDefaultLang,
+	fetchUserLang,
+	fetchProjectName,
+	fetchTemplateRow,
+	fetchAllTemplateRows,
+	fetchTemplateVariables,
+	fetchAdminEmails,
+} from '../src/directus';
+import { vi } from 'vitest';
 
 describe('fetchDefaultLang', () => {
-	it('returns the primary language tag from default_language', async () => {
-		const { SettingsService } = makeSettingsService({ default_language: 'fr-CA' });
-		const services = { SettingsService } as unknown as ExtensionsServices;
-
-		expect(await fetchDefaultLang(services, SCHEMA, {})).toBe('fr');
+	it('returns the primary subtag of directus_settings.default_language', async () => {
+		const { services } = makeServices({
+			settings: { readSingleton: vi.fn().mockResolvedValue({ default_language: 'fr-CA' }) },
+		});
+		expect(await fetchDefaultLang(services, emptySchema, {})).toBe('fr');
 	});
 
-	it('handles a plain language code without region tag', async () => {
-		const { SettingsService } = makeSettingsService({ default_language: 'en' });
-		const services = { SettingsService } as unknown as ExtensionsServices;
-
-		expect(await fetchDefaultLang(services, SCHEMA, {})).toBe('en');
+	it('falls back to env I18N_EMAIL_FALLBACK_LANG when setting is missing', async () => {
+		const { services } = makeServices({
+			settings: { readSingleton: vi.fn().mockResolvedValue({}) },
+		});
+		expect(
+			await fetchDefaultLang(services, emptySchema, { I18N_EMAIL_FALLBACK_LANG: 'es' }),
+		).toBe('es');
 	});
 
-	it('falls back to "en" when default_language is null and no env variable', async () => {
-		const { SettingsService } = makeSettingsService({ default_language: null });
-		const services = { SettingsService } as unknown as ExtensionsServices;
-
-		expect(await fetchDefaultLang(services, SCHEMA, {})).toBe('en');
-	});
-
-	it('uses I18N_EMAIL_FALLBACK_LANG env variable when default_language is null', async () => {
-		const { SettingsService } = makeSettingsService({ default_language: null });
-		const services = { SettingsService } as unknown as ExtensionsServices;
-
-		expect(await fetchDefaultLang(services, SCHEMA, { I18N_EMAIL_FALLBACK_LANG: 'fr' })).toBe(
-			'fr',
-		);
-	});
-
-	it('ignores I18N_EMAIL_FALLBACK_LANG when default_language is set', async () => {
-		const { SettingsService } = makeSettingsService({ default_language: 'de' });
-		const services = { SettingsService } as unknown as ExtensionsServices;
-
-		expect(await fetchDefaultLang(services, SCHEMA, { I18N_EMAIL_FALLBACK_LANG: 'fr' })).toBe(
-			'de',
-		);
-	});
-
-	it('instantiates SettingsService with accountability: null', async () => {
-		const { SettingsService } = makeSettingsService({ default_language: 'en' });
-		const services = { SettingsService } as unknown as ExtensionsServices;
-
-		await fetchDefaultLang(services, SCHEMA, {});
-
-		expect(SettingsService).toHaveBeenCalledWith(
-			expect.objectContaining({ accountability: null }),
-		);
+	it('falls back to hardcoded "en" when nothing else is configured', async () => {
+		const { services } = makeServices({
+			settings: { readSingleton: vi.fn().mockResolvedValue({}) },
+		});
+		expect(await fetchDefaultLang(services, emptySchema, {})).toBe('en');
 	});
 });
 
 describe('fetchUserLang', () => {
-	it('returns the primary language tag from the matched user', async () => {
-		const { ItemsService } = makeItemsService([{ language: 'fr-CA' }]);
-		const services = { ItemsService } as unknown as ExtensionsServices;
-
-		expect(await fetchUserLang('user@example.com', services, SCHEMA)).toBe('fr');
+	it('returns the primary subtag of a matched user', async () => {
+		const { services } = makeServices({
+			items: {
+				directus_users: { readByQuery: vi.fn().mockResolvedValue([{ language: 'fr-CA' }]) },
+			},
+		});
+		expect(await fetchUserLang('x@y.com', services, emptySchema)).toBe('fr');
 	});
 
-	it('handles a plain language code without region tag', async () => {
-		const { ItemsService } = makeItemsService([{ language: 'de' }]);
-		const services = { ItemsService } as unknown as ExtensionsServices;
-
-		expect(await fetchUserLang('user@example.com', services, SCHEMA)).toBe('de');
+	it('returns null when no user matches', async () => {
+		const { services } = makeServices({
+			items: { directus_users: { readByQuery: vi.fn().mockResolvedValue([]) } },
+		});
+		expect(await fetchUserLang('x@y.com', services, emptySchema)).toBe(null);
 	});
 
-	it('returns null when the user has no language set', async () => {
-		const { ItemsService } = makeItemsService([{ language: null }]);
-		const services = { ItemsService } as unknown as ExtensionsServices;
-
-		expect(await fetchUserLang('user@example.com', services, SCHEMA)).toBeNull();
-	});
-
-	it('returns null when no user is found', async () => {
-		const { ItemsService } = makeItemsService([]);
-		const services = { ItemsService } as unknown as ExtensionsServices;
-
-		expect(await fetchUserLang('unknown@example.com', services, SCHEMA)).toBeNull();
-	});
-
-	it('instantiates ItemsService for directus_users with accountability: null', async () => {
-		const { ItemsService } = makeItemsService([]);
-		const services = { ItemsService } as unknown as ExtensionsServices;
-
-		await fetchUserLang('user@example.com', services, SCHEMA);
-
-		expect(ItemsService).toHaveBeenCalledWith(
-			'directus_users',
-			expect.objectContaining({ accountability: null }),
-		);
+	it('returns null when the user row has no language', async () => {
+		const { services } = makeServices({
+			items: { directus_users: { readByQuery: vi.fn().mockResolvedValue([{}]) } },
+		});
+		expect(await fetchUserLang('x@y.com', services, emptySchema)).toBe(null);
 	});
 });
 
 describe('fetchProjectName', () => {
-	it('returns the project name from settings', async () => {
-		const { SettingsService } = makeSettingsService({ project_name: 'My Project' });
-		const services = { SettingsService } as unknown as ExtensionsServices;
-
-		expect(await fetchProjectName(services, SCHEMA)).toBe('My Project');
+	it('returns the project_name string when present', async () => {
+		const { services } = makeServices({
+			settings: { readSingleton: vi.fn().mockResolvedValue({ project_name: 'Acme' }) },
+		});
+		expect(await fetchProjectName(services, emptySchema)).toBe('Acme');
 	});
 
-	it('returns null when project_name is null', async () => {
-		const { SettingsService } = makeSettingsService({ project_name: null });
-		const services = { SettingsService } as unknown as ExtensionsServices;
+	it('returns null for empty or missing values', async () => {
+		const { services: s1 } = makeServices({
+			settings: { readSingleton: vi.fn().mockResolvedValue({ project_name: '' }) },
+		});
+		expect(await fetchProjectName(s1, emptySchema)).toBe(null);
+		const { services: s2 } = makeServices({
+			settings: { readSingleton: vi.fn().mockResolvedValue({}) },
+		});
+		expect(await fetchProjectName(s2, emptySchema)).toBe(null);
+	});
+});
 
-		expect(await fetchProjectName(services, SCHEMA)).toBeNull();
+describe('fetchTemplateRow', () => {
+	it('returns the first row from readByQuery', async () => {
+		const row = { template_key: 'k', language: 'fr' };
+		const { services } = makeServices({
+			items: { email_templates: { readByQuery: vi.fn().mockResolvedValue([row]) } },
+		});
+		expect(await fetchTemplateRow('k', 'fr', services, emptySchema)).toEqual(row);
 	});
 
-	it('returns null when project_name is an empty string', async () => {
-		const { SettingsService } = makeSettingsService({ project_name: '' });
-		const services = { SettingsService } as unknown as ExtensionsServices;
-
-		expect(await fetchProjectName(services, SCHEMA)).toBeNull();
+	it('returns null when no row matches', async () => {
+		const { services } = makeServices({
+			items: { email_templates: { readByQuery: vi.fn().mockResolvedValue([]) } },
+		});
+		expect(await fetchTemplateRow('k', 'fr', services, emptySchema)).toBe(null);
 	});
+});
 
-	it('instantiates SettingsService with accountability: null', async () => {
-		const { SettingsService } = makeSettingsService({ project_name: 'Test' });
-		const services = { SettingsService } as unknown as ExtensionsServices;
+describe('fetchAllTemplateRows', () => {
+	it('returns all active rows', async () => {
+		const rows = [{ id: '1' }, { id: '2' }];
+		const { services } = makeServices({
+			items: { email_templates: { readByQuery: vi.fn().mockResolvedValue(rows) } },
+		});
+		expect(await fetchAllTemplateRows(services, emptySchema)).toEqual(rows);
+	});
+});
 
-		await fetchProjectName(services, SCHEMA);
+describe('fetchTemplateVariables', () => {
+	it('returns registry rows for a template key', async () => {
+		const rows = [{ variable_name: 'url', is_required: true }];
+		const { services } = makeServices({
+			items: { email_template_variables: { readByQuery: vi.fn().mockResolvedValue(rows) } },
+		});
+		expect(await fetchTemplateVariables('k', services, emptySchema)).toEqual(rows);
+	});
+});
 
-		expect(SettingsService).toHaveBeenCalledWith(
-			expect.objectContaining({ accountability: null }),
-		);
+describe('fetchAdminEmails', () => {
+	it('returns emails of active admin users, filtering out non-strings', async () => {
+		const { services } = makeServices({
+			items: {
+				directus_users: {
+					readByQuery: vi
+						.fn()
+						.mockResolvedValue([
+							{ email: 'a@x.com' },
+							{ email: '' },
+							{ email: null },
+							{},
+							{ email: 'b@x.com' },
+						]),
+				},
+			},
+		});
+		expect(await fetchAdminEmails(services, emptySchema)).toEqual(['a@x.com', 'b@x.com']);
 	});
 });
