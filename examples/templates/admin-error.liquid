@@ -1,0 +1,31 @@
+{% layout "base" %}
+{% block content %}
+
+<h1>{{ i18n.heading }}</h1>
+
+<p style="padding-bottom: 20px">{{ i18n.body }}</p>
+
+<table style="width: 100%; border-collapse: collapse; font-family: monospace; font-size: 13px;">
+  <tr>
+    <td style="padding: 6px 10px; border: 1px solid #ddd; background: #f5f5f5; font-weight: 600; width: 160px;">
+      {{ i18n.reason_label }}
+    </td>
+    <td style="padding: 6px 10px; border: 1px solid #ddd;">{{ reason }}</td>
+  </tr>
+  <tr>
+    <td style="padding: 6px 10px; border: 1px solid #ddd; background: #f5f5f5; font-weight: 600;">
+      {{ i18n.timestamp_label }}
+    </td>
+    <td style="padding: 6px 10px; border: 1px solid #ddd;">{{ timestamp }}</td>
+  </tr>
+  <tr>
+    <td style="padding: 6px 10px; border: 1px solid #ddd; background: #f5f5f5; font-weight: 600; vertical-align: top;">
+      {{ i18n.context_label }}
+    </td>
+    <td style="padding: 6px 10px; border: 1px solid #ddd;">
+      <pre style="margin: 0; white-space: pre-wrap; word-break: break-word;">{{ context }}</pre>
+    </td>
+  </tr>
+</table>
+
+{% endblock %}
