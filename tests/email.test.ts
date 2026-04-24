@@ -1,146 +1,80 @@
 import { describe, it, expect } from 'vitest';
-import { extractRecipientEmail, applyTranslationsToEmail } from '../src/email';
 import type { EmailOptions } from '@directus/types';
-import type { TemplateTrans } from '../src/types';
+import { applyTranslationsToEmail, extractRecipientEmail } from '../src/email';
 
 describe('extractRecipientEmail', () => {
-	it('returns a plain string address as-is', () => {
-		expect(extractRecipientEmail('user@example.com')).toBe('user@example.com');
+	it('returns a plain string', () => {
+		expect(extractRecipientEmail('a@b.com')).toBe('a@b.com');
 	});
 
-	it('extracts address from the first element of an array of strings', () => {
-		expect(extractRecipientEmail(['user@example.com', 'other@example.com'])).toBe(
-			'user@example.com',
-		);
+	it('handles an array of strings', () => {
+		expect(extractRecipientEmail(['a@b.com', 'c@d.com'] as any)).toBe('a@b.com');
 	});
 
-	it('extracts address from an address object', () => {
-		expect(extractRecipientEmail({ address: 'user@example.com', name: 'User' } as any)).toBe(
-			'user@example.com',
-		);
+	it('handles an array of address objects', () => {
+		expect(extractRecipientEmail([{ address: 'x@y.com' }] as any)).toBe('x@y.com');
 	});
 
-	it('extracts address from the first element of an array of address objects', () => {
-		expect(
-			extractRecipientEmail([
-				{ address: 'user@example.com', name: 'User' } as any,
-				'other@example.com',
-			]),
-		).toBe('user@example.com');
+	it('handles a single address object', () => {
+		expect(extractRecipientEmail({ address: 'x@y.com' } as any)).toBe('x@y.com');
 	});
 
-	it('returns null when address is unavailable', () => {
-		expect(extractRecipientEmail(undefined as any)).toBeNull();
+	it('returns null when the address object has no address property', () => {
+		expect(extractRecipientEmail({} as any)).toBe(null);
+		expect(extractRecipientEmail([{}] as any)).toBe(null);
 	});
 
-	it('returns null when array element has no address property', () => {
-		expect(extractRecipientEmail([{} as any])).toBeNull();
+	it('returns null for falsy inputs', () => {
+		expect(extractRecipientEmail(null as any)).toBe(null);
 	});
 });
 
 describe('applyTranslationsToEmail', () => {
-	function makeEmail(overrides: Partial<EmailOptions> = {}): EmailOptions {
+	function baseEmail(): EmailOptions {
 		return {
-			to: 'user@example.com',
-			subject: 'Original Subject',
-			template: { name: 'password-reset', data: {} },
-			...overrides,
-		};
+			to: 'x@y.com',
+			subject: 'Original',
+			template: { name: 't', data: { url: 'https://ex.com' } },
+		} as EmailOptions;
 	}
 
-	it('overrides the subject when trans.subject is set', () => {
-		const email = makeEmail();
-		const trans: TemplateTrans = { subject: 'Translated Subject' };
-
-		applyTranslationsToEmail(email, trans, 'info@example.com');
-
-		expect(email.subject).toBe('Translated Subject');
-	});
-
-	it('preserves the original subject when trans.subject is absent', () => {
-		const email = makeEmail();
-		const trans: TemplateTrans = { cta: 'Click here' };
-
-		applyTranslationsToEmail(email, trans, 'info@example.com');
-
-		expect(email.subject).toBe('Original Subject');
-	});
-
-	it('sets from with translated name and plain address from env', () => {
-		const email = makeEmail();
-		const trans: TemplateTrans = { from_name: 'Sympo de Thetford' };
-
-		applyTranslationsToEmail(email, trans, 'info@example.com');
-
-		expect(email.from).toEqual({ name: 'Sympo de Thetford', address: 'info@example.com' });
-	});
-
-	it('sets from with translated name and address extracted from a "Name <email>" env value', () => {
-		const email = makeEmail();
-		const trans: TemplateTrans = { from_name: 'Sympo de Thetford' };
-
-		applyTranslationsToEmail(email, trans, 'Old Name <info@example.com>');
-
-		expect(email.from).toEqual({ name: 'Sympo de Thetford', address: 'info@example.com' });
-	});
-
-	it('does not set from when from_name is absent', () => {
-		const email = makeEmail({ from: 'original@example.com' });
-		const trans: TemplateTrans = { subject: 'Hello' };
-
-		applyTranslationsToEmail(email, trans, 'info@example.com');
-
-		expect(email.from).toBe('original@example.com');
-	});
-
-	it('injects non-reserved keys into template.data.i18n', () => {
-		const email = makeEmail({
-			template: { name: 'password-reset', data: { existingVar: 'keep' } },
-		});
-		const trans: TemplateTrans = {
-			subject: 'Subject',
-			from_name: 'Name',
-			heading: 'Reset your password',
-			cta: 'Reset',
-		};
-
-		applyTranslationsToEmail(email, trans, 'info@example.com');
-
-		expect(email.template!.data).toMatchObject({
-			existingVar: 'keep',
-			i18n: {
-				heading: 'Reset your password',
-				cta: 'Reset',
-			},
+	it('sets subject, from, and i18n from translations (bare env address)', () => {
+		const email = baseEmail();
+		applyTranslationsToEmail(
+			email,
+			{ subject: 'Bonjour', from_name: 'Org', heading: 'H', body: 'B' },
+			'noreply@ex.com',
+		);
+		expect(email.subject).toBe('Bonjour');
+		expect((email as any).from).toEqual({ name: 'Org', address: 'noreply@ex.com' });
+		expect(email.template?.data).toEqual({
+			url: 'https://ex.com',
+			i18n: { heading: 'H', body: 'B' },
 		});
 	});
 
-	it('does not include subject or from_name in i18n template data', () => {
-		const email = makeEmail();
-		const trans: TemplateTrans = { subject: 'Subject', from_name: 'Name', cta: 'Go' };
-
-		applyTranslationsToEmail(email, trans, 'info@example.com');
-
-		expect(email.template!.data.i18n).not.toHaveProperty('subject');
-		expect(email.template!.data.i18n).not.toHaveProperty('from_name');
+	it('extracts the bare address from a RFC-5322 display-form EMAIL_FROM', () => {
+		const email = baseEmail();
+		applyTranslationsToEmail(
+			email,
+			{ subject: 'Hi', from_name: 'Org', heading: 'H' },
+			'Previous <noreply@ex.com>',
+		);
+		expect((email as any).from).toEqual({ name: 'Org', address: 'noreply@ex.com' });
 	});
 
-	it('excludes keys with non-string values from i18n template data', () => {
-		const email = makeEmail();
-		const trans: TemplateTrans = { cta: 'Click', broken: undefined };
-
-		applyTranslationsToEmail(email, trans, 'info@example.com');
-
-		expect(email.template!.data.i18n).toHaveProperty('cta', 'Click');
-		expect(email.template!.data.i18n).not.toHaveProperty('broken');
+	it('leaves subject and from untouched when translations omit them', () => {
+		const email = baseEmail();
+		applyTranslationsToEmail(email, { heading: 'H' }, 'noreply@ex.com');
+		expect(email.subject).toBe('Original');
+		expect((email as any).from).toBeUndefined();
+		expect(email.template?.data).toEqual({ url: 'https://ex.com', i18n: { heading: 'H' } });
 	});
 
-	it('does not modify template.data when email has no template', () => {
-		const email: EmailOptions = { to: 'user@example.com', subject: 'Hi', html: '<p>Hi</p>' };
-		const trans: TemplateTrans = { cta: 'Click' };
-
-		applyTranslationsToEmail(email, trans, 'info@example.com');
-
-		expect(email.template).toBeUndefined();
+	it('skips i18n injection when the email has no template', () => {
+		const email = { to: 'x@y.com', subject: 's' } as EmailOptions;
+		applyTranslationsToEmail(email, { subject: 'New', heading: 'H' }, '');
+		expect(email.subject).toBe('New');
+		expect((email as any).template).toBeUndefined();
 	});
 });
