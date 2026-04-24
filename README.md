@@ -1,6 +1,13 @@
-# Directus i18n for System Emails
+# Directus i18n Email Extension
 
-This extension translates system emails (password reset, user invitation, user registration) based on each recipient's language setting. It uses a single shared Liquid template per email type and injects translated strings from per-language JSON files — no duplicate templates needed.
+Database-backed, multilingual transactional email for Directus. Translate system emails (password reset, user invitation, user registration) into every recipient's language — and ship your own transactional templates the same way.
+
+- **DB is the source of truth.** Templates live in `email_templates`; admins edit them in the Data Studio.
+- **Filesystem is a rendering cache.** Locale JSON files are auto-synced to `EMAIL_TEMPLATES_PATH/locales/<lang>.json` so Directus's Liquid renderer can consume them.
+- **Idempotent bootstrap.** Required collections are created on first load. Protected system templates are seeded in FR + EN and cannot be deleted.
+- **Variable registry.** Declare required variables per template; missing variables abort the send and notify admins.
+- **Admin alerting.** Any dispatch failure sends an `admin-error` email to every admin-role user.
+- **Safe by default.** Unknown template names pass through untouched, so existing raw Directus templates keep working.
 
 <br />
 
@@ -8,19 +15,19 @@ This extension translates system emails (password reset, user invitation, user r
 
 <br />
 
-## Installation
-
-Check the [official Directus guide](https://docs.directus.io/extensions/installing-extensions.html) for all options.
-
-### Extensions Directory
-
-Clone this repository and build the extension:
+## Install
 
 ```sh
 npm ci && npm run build
 ```
 
-Upload the output to your Directus extensions directory.
+Copy the built extension into your Directus `extensions/` directory (or use `directus-extension link`), then restart Directus. See the [official installation guide](https://docs.directus.io/extensions/installing-extensions.html) for other options.
+
+On first start the extension will:
+
+1. Create `email_templates`, `email_template_variables`, and `email_template_sync_audit` collections if missing.
+2. Seed protected system templates (`password-reset`, `user-invitation`, `user-registration`, `admin-error`, `base`) in FR and EN.
+3. Sync locale JSON files to `EMAIL_TEMPLATES_PATH/locales/<lang>.json`.
 
 <br />
 
@@ -30,14 +37,16 @@ Upload the output to your Directus extensions directory.
 
 ## How It Works
 
-The extension is a **hook** that intercepts all outgoing emails via the `email.send` filter. For each of the three supported system email types it:
+The extension registers an `email.send` filter. For every outgoing email:
 
-1. Looks up the **recipient's language** from their Directus user profile if available. Determines the **default language** from `directus_settings.default_language` otherwise.
-2. Tries to load `<EMAIL_TEMPLATES_PATH>/locales/<user-lang>.json`, falling back to the default-lang file, then giving up (email is sent untouched).
-3. Extracts the translation keys for the relevant email type from the locale file.
-4. Injects them into the email as `subject`, `from` (sender name), and `template.data.i18n.*` variables available in the Liquid template.
+1. Resolves the recipient's language (user profile → `directus_settings.default_language` → `I18N_EMAIL_FALLBACK_LANG` → `en`).
+2. Fetches `email_templates` where `template_key = <template name>` AND `language = <effective lang>`. Falls back to the default language if the row is missing.
+3. Validates required variables from `email_template_variables`. Missing variables abort the send and trigger an admin notification.
+4. Injects `subject`, `from_name`, and the row's `strings` into the email as `template.data.i18n.*`.
+5. Also injects the `base` layout strings as `template.data.i18n.base.*` (for shared footer/header copy).
+6. Templates not present in the DB pass through untouched.
 
-Translation is **always applied** regardless of whether the user's language matches the system default.
+Any write to `email_templates` triggers a re-sync of the affected language's locale file.
 
 <br />
 
@@ -47,14 +56,19 @@ Translation is **always applied** regardless of whether the user's language matc
 
 ## Environment Variables
 
-Configure `EMAIL_TEMPLATES_PATH` and `EMAIL_FROM` as described in the [Directus email documentation](https://docs.directus.io/configuration/email.html#configuration-options), placing your templates in the usual Directus templates folder.
+The standard Directus email variables apply (see [Directus email config](https://docs.directus.io/configuration/email.html)):
 
-The following variables are specific to this extension:
+| Variable               | Description                                                  |
+| ---------------------- | ------------------------------------------------------------ |
+| `EMAIL_TEMPLATES_PATH` | Path where `.liquid` templates live. Default: `./templates`. |
+| `EMAIL_FROM`           | Envelope `from` address. Used as the fallback sender.        |
 
-| Variable                      | Default | Description                                                                                                      |
-| ----------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------- |
-| `I18N_EMAIL_FALLBACK_FROM_NAME` | —     | Fallback sender display name when none is set in the locale file. Falls back to `directus_settings.project_name` |
-| `I18N_EMAIL_FALLBACK_LANG`    | `en`    | Language code to use when `directus_settings.default_language` is `null`                                         |
+Extension-specific:
+
+| Variable                        | Default | Description                                                                                               |
+| ------------------------------- | ------- | --------------------------------------------------------------------------------------------------------- |
+| `I18N_EMAIL_FALLBACK_LANG`      | `en`    | Language used when `directus_settings.default_language` is null.                                          |
+| `I18N_EMAIL_FALLBACK_FROM_NAME` | —       | Display name used when a template row has no `from_name`. Falls back to `directus_settings.project_name`. |
 
 <br />
 
@@ -62,63 +76,68 @@ The following variables are specific to this extension:
 
 <br />
 
-## Directory Structure
+## Directory Layout
 
 ```
 EMAIL_TEMPLATES_PATH/
+├── base.liquid                 — shared layout (referenced via {% layout "base" %})
 ├── password-reset.liquid
 ├── user-invitation.liquid
 ├── user-registration.liquid
-└── locales/
+├── admin-error.liquid          — internal: sent to admins on dispatch failure
+└── locales/                    — AUTO-GENERATED from email_templates (do not edit by hand)
     ├── en.json
     └── fr.json
 ```
 
+The `.liquid` templates are yours — copy the files under [examples/templates/](examples/templates) as a starting point. The `locales/` folder is a write-through cache of the DB; edits made there are overwritten on the next DB write.
+
 <br />
 
 ---
 
 <br />
 
-## Locale Files
+## Collections
 
-Each locale file is a JSON object with an optional top-level `from_name` and one section per email type.
+### `email_templates`
 
-**`locales/en.json`**
+| Field            | Type    | Notes                                                              |
+| ---------------- | ------- | ------------------------------------------------------------------ |
+| `id`             | uuid    | PK                                                                 |
+| `template_key`   | string  | e.g. `password-reset`, `base`, or your custom key                  |
+| `language`       | string  | ISO short code (`fr`, `en`, …)                                     |
+| `category`       | enum    | `system` \| `transactional` \| `marketing` \| `custom`             |
+| `subject`        | string  | Email subject. Empty for the `base` layout.                        |
+| `from_name`      | string? | Sender display name override                                       |
+| `strings`        | json    | Arbitrary key → string map exposed in the template as `i18n.*`     |
+| `description`    | text?   | Admin-facing explanation                                           |
+| `is_active`      | boolean | Disable without deleting                                           |
+| `is_protected`   | boolean | Protected rows cannot be deleted (system templates)                |
+| `version`        | integer | Bumped on admin edits                                              |
+| `checksum`       | string  | SHA-256 of `{ subject, from_name, strings }` — maintained by hooks |
+| `last_synced_at` | ts?     | Last successful filesystem sync                                    |
 
-```json
-{
-	"from_name": "My Project",
-	"password-reset": {
-		"subject": "Password Reset Request",
-		"heading": "Reset your password",
-		"body": "We received a request to reset the password for your account.",
-		"cta": "Reset Your Password",
-		"expiry_notice": "This link expires in 24 hours."
-	},
-	"user-invitation": {
-		"subject": "You have been invited",
-		"heading": "You've been invited to {{ projectName }}",
-		"body": "Click below to accept your invitation.",
-		"cta": "Accept Invitation"
-	},
-	"user-registration": {
-		"subject": "Verify your email address",
-		"heading": "Verify your email address",
-		"body": "Click below to complete your registration.",
-		"cta": "Verify Email"
-	}
-}
-```
+Unique composite: `(template_key, language)`.
 
-**Key rules:**
+### `email_template_variables`
 
-- `from_name` at the top level is used as the sender display name for all email types unless overridden inside a specific template section.
-- `subject` overrides the email subject line.
-- Any other keys (e.g. `heading`, `body`, `cta`) become available in the template as `{{ i18n.heading }}`, `{{ i18n.body }}`, etc.
-- `subject` and `from_name` are **not** injected into the `i18n` object — they are applied to the email metadata directly.
-- If a locale file for the user's language is not found, the default-language file is tried. If neither exists, the email is sent with no changes.
-- **Locale string values are plain text — Liquid templating is not supported inside JSON locale values.** Variables like `{{ projectName }}` written inside a locale string will be passed through literally and will not be rendered. Use static text only.
+Declare what each template needs. If a variable is `is_required` and missing from `template.data`, the send aborts.
+
+| Field           | Type    | Notes                        |
+| --------------- | ------- | ---------------------------- |
+| `template_key`  | string  | FK by convention             |
+| `variable_name` | string  | e.g. `url`, `projectName`    |
+| `is_required`   | boolean |                              |
+| `is_protected`  | boolean | Variables for protected rows |
+| `description`   | text    | Admin-facing                 |
+| `example_value` | string  | Shown in docs / preview      |
+
+Unique composite: `(template_key, variable_name)`.
+
+### `email_template_sync_audit`
+
+Append-only log of filesystem syncs. Written by the extension; read by admins for debugging.
 
 <br />
 
@@ -128,29 +147,63 @@ Each locale file is a JSON object with an optional top-level `from_name` and one
 
 ## Liquid Templates
 
-Each email type has a single shared `.liquid` template. Translated content is made available under the `i18n` object. Directus also provides its own built-in variables.
+Templates are yours to design. Inside a template you have access to:
 
-**`password-reset.liquid`**
+| Variable            | Source                          | Description                                                   |
+| ------------------- | ------------------------------- | ------------------------------------------------------------- |
+| `{{ i18n.* }}`      | Active template row's `strings` | Any key from the DB row's JSON payload                        |
+| `{{ i18n.base.* }}` | `base` template row's `strings` | Shared layout strings (footer, org name, etc.)                |
+| `{{ url }}`         | Directus                        | Action URL for system emails (reset link, invitation link, …) |
+| `{{ projectName }}` | Directus                        | `directus_settings.project_name`                              |
+| _other_             | Your caller                     | Anything you passed in `template.data`                        |
+
+Strings in the DB are **plain text**. Liquid expressions written inside `strings` values are not re-rendered.
+
+### Minimal example
 
 ```liquid
 {% layout "base" %}
 {% block content %}
-
-<h1>{{ i18n.heading }}</h1>
-<p>{{ i18n.body }}</p>
-<a href="{{ url }}">{{ i18n.cta }}</a>
-<p><small>{{ i18n.expiry_notice }}</small></p>
-
+  <h1>{{ i18n.heading }}</h1>
+  <p>{{ i18n.body }}</p>
+  <a href="{{ url }}">{{ i18n.cta }}</a>
+  <p><small>{{ i18n.expiry_notice }}</small></p>
 {% endblock %}
 ```
 
-**Available variables:**
+See [examples/templates/](examples/templates) for the full set, including [admin-error.liquid](examples/templates/admin-error.liquid) and [base.liquid](examples/templates/base.liquid).
 
-| Variable            | Source      | Description                                      |
-| ------------------- | ----------- | ------------------------------------------------ |
-| `{{ i18n.* }}`      | Locale file | Any key defined in the template's locale section — **plain text only, no Liquid inside locale values** |
-| `{{ url }}`         | Directus    | Action URL (reset link, invitation link, etc.)   |
-| `{{ projectName }}` | Directus    | Project name from settings — use this directly in `.liquid` templates, not inside JSON locale strings |
+<br />
+
+---
+
+<br />
+
+## Sending Custom Emails
+
+Use the standard Directus `MailService` from your own extensions — this extension intercepts every send:
+
+```ts
+const mail = new services.MailService({ schema, accountability: null });
+
+await mail.send({
+	to: 'user@example.com',
+	subject: 'fallback subject', // overridden by the DB row
+	template: {
+		name: 'order-shipped', // must match email_templates.template_key
+		data: {
+			url: 'https://shop.example.com/orders/42',
+			trackingNumber: 'ABC123',
+		},
+	},
+});
+```
+
+1. Create an `email_templates` row for each language with `template_key = 'order-shipped'`.
+2. Declare required variables in `email_template_variables`.
+3. Add `order-shipped.liquid` under `EMAIL_TEMPLATES_PATH`.
+
+If no DB row exists for that key, the email passes through unchanged — Directus renders the Liquid template with whatever `data` you provided.
 
 <br />
 
@@ -160,14 +213,47 @@ Each email type has a single shared `.liquid` template. Translated content is ma
 
 ## Language Resolution
 
-The effective language for each email is resolved as:
+1. **User language** — `directus_users.language` of the recipient (primary tag, e.g. `fr` from `fr-CA`).
+2. **Project default** — `directus_settings.default_language` (primary tag).
+3. **`I18N_EMAIL_FALLBACK_LANG`** — used when the project default is null.
+4. **`en`** — hard-coded last resort.
 
-1. **User language** — the `language` field on the recipient's `directus_users` record (primary tag only, e.g. `fr` from `fr-CA`).
-2. **Default language** — `directus_settings.default_language` (primary tag only).
-3. **`I18N_EMAIL_FALLBACK_LANG`** env variable — used if `default_language` is `null`.
-4. **`en`** — hardcoded last resort.
+If no row matches `(template_key, effectiveLang)`, the extension retries with `(template_key, defaultLang)`. If that also misses, the email passes through untouched.
 
-The locale file for the user's language is tried first. If it doesn't exist, the default-language file is used. If that doesn't exist either, no translations are applied.
+<br />
+
+---
+
+<br />
+
+## Admin Error Notifications
+
+When the extension cannot dispatch an email (missing required variable, DB error, etc.) it sends an `admin-error` email to every admin-role user. The template is seeded in FR + EN and receives:
+
+- `reason` — human-readable failure summary
+- `timestamp` — ISO timestamp
+- `context` — JSON-stringified context (template key, language, missing variables, recipient)
+
+The extension never re-intercepts an outgoing `admin-error` send, preventing infinite loops if admin delivery itself fails.
+
+<br />
+
+---
+
+<br />
+
+## Development
+
+```sh
+npm run typecheck   # tsc --noEmit
+npm run lint        # eslint
+npm run verify      # typecheck + lint
+npm test            # verify + vitest (with 100% coverage gate)
+npm run build       # test + directus-extension build
+npm run dev         # watch build (no verify/test gate)
+```
+
+Coverage thresholds are set to 100% on statements, branches, functions, and lines.
 
 <br />
 
@@ -177,15 +263,13 @@ The locale file for the user's language is tried first. If it doesn't exist, the
 
 ## Notes
 
-### UI strings are separate from email translations
+### UI strings are separate
 
-This extension only translates **email content**. Directus admin UI strings (shown in the browser after an action, e.g. the password reset confirmation message) are handled by Directus's own frontend i18n system and are not affected by this extension.
+This extension translates **email content only**. Directus admin UI strings (e.g. the "password reset sent" confirmation on the login page) are handled by the Directus frontend i18n system and are not affected here. Override those via **Settings → Translations** in the Data Studio.
 
-If a UI string appears in the wrong language, override it via **Settings → Translations** in the Directus admin panel. Known keys:
+### Unknown templates pass through
 
-| Situation                             | Translation key          |
-| ------------------------------------- | ------------------------ |
-| Password reset confirmation (login page) | `password_reset_sent` |
+Sending an email with a `template.name` that has no matching DB row is a no-op as far as this extension is concerned. Directus's native Liquid renderer handles it the same way it always has.
 
 <br />
 
@@ -195,8 +279,4 @@ If a UI string appears in the wrong language, override it via **Settings → Tra
 
 ## Contributing
 
-Anyone is welcome to contribute, but mind the [guidelines](.github/CONTRIBUTING.md):
-
-- [Bug reports](.github/CONTRIBUTING.md#bugs)
-- [Feature requests](.github/CONTRIBUTING.md#features)
-- [Pull requests](.github/CONTRIBUTING.md#pull-requests)
+See [.github/CONTRIBUTING.md](.github/CONTRIBUTING.md) for bug reports, feature requests, and PRs.
