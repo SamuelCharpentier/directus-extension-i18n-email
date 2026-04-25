@@ -1,121 +1,181 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-
-const fsMocks = vi.hoisted(() => ({
-	writeFile: vi.fn().mockResolvedValue(undefined),
-	rename: vi.fn().mockResolvedValue(undefined),
-	mkdir: vi.fn().mockResolvedValue(undefined),
-}));
-vi.mock('node:fs/promises', () => fsMocks);
-
-import { emptySchema, makeLogger, makeServices } from './helpers';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { mkdtemp, readFile, rm, writeFile, mkdir } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { makeServices, makeLogger, makeSchema } from './helpers';
 import { runBootstrap, __INTERNAL__ } from '../src/bootstrap';
-import { SEED_TEMPLATES, SEED_VARIABLES } from '../src/seeds';
-
-function servicesWith(overrides: {
-	collectionsExists?: boolean;
-	existingTemplates?: any[];
-	existingVariables?: any[];
-}) {
-	const { collectionsExists = false, existingTemplates = [], existingVariables = [] } = overrides;
-	return makeServices({
-		collections: {
-			readOne: collectionsExists
-				? vi.fn().mockResolvedValue({ collection: 'x' })
-				: vi.fn().mockRejectedValue(new Error('missing')),
-			createOne: vi.fn().mockResolvedValue('new'),
-		},
-		items: {
-			email_templates: {
-				readByQuery: vi.fn().mockResolvedValue(existingTemplates),
-				createOne: vi.fn().mockResolvedValue('id'),
-			},
-			email_template_variables: {
-				readByQuery: vi.fn().mockResolvedValue(existingVariables),
-				createOne: vi.fn().mockResolvedValue('id'),
-			},
-		},
-	});
-}
 
 describe('runBootstrap', () => {
-	beforeEach(() => {
+	let dir: string;
+	beforeEach(async () => {
 		__INTERNAL__.reset();
-		fsMocks.writeFile.mockClear();
-		fsMocks.rename.mockClear();
+		dir = await mkdtemp(join(tmpdir(), 'i18n-email-boot-'));
+	});
+	afterEach(async () => {
+		await rm(dir, { recursive: true, force: true });
 	});
 
-	it('creates collections, seeds templates + variables, and syncs locales', async () => {
-		const { services, collectionsInstance, itemsInstances } = servicesWith({
-			collectionsExists: false,
+	const getSchema = async () => makeSchema();
+
+	it('creates collections, relations, seeds, flushes bodies', async () => {
+		const s = makeServices();
+		const logger = makeLogger();
+		await runBootstrap(dir, s as any, getSchema, logger);
+		// collections
+		expect(s._collectionsCreated.length).toBeGreaterThanOrEqual(5);
+		// relations
+		expect(s._relationsCreated.length).toBe(2);
+		// language seeded
+		expect(s._stores.languages?.find((r: any) => r.code === 'en')).toBeTruthy();
+		// templates seeded
+		expect(s._stores.email_templates?.length).toBe(5);
+		// translations seeded (5 templates × 2 langs)
+		expect(s._stores.email_template_translations?.length).toBe(10);
+		// variables seeded
+		expect(s._stores.email_template_variables?.length).toBeGreaterThan(0);
+		// bodies flushed
+		const body = await readFile(join(dir, 'base.liquid'), 'utf-8');
+		expect(body).toContain('<html');
+	});
+
+	it('prefers disk body over seed default when row missing', async () => {
+		await mkdir(dir, { recursive: true });
+		await writeFile(join(dir, 'base.liquid'), 'FROM_DISK', 'utf-8');
+		const s = makeServices();
+		const logger = makeLogger();
+		await runBootstrap(dir, s as any, getSchema, logger);
+		const baseRow = s._stores.email_templates?.find((r: any) => r.template_key === 'base');
+		expect(baseRow.body).toBe('FROM_DISK');
+	});
+
+	it('does not overwrite existing DB row', async () => {
+		const s = makeServices({
+			items: {
+				email_templates: {
+					rows: [
+						{
+							id: 'pre',
+							template_key: 'base',
+							category: 'layout',
+							body: 'EXISTING',
+						},
+					],
+				},
+			},
 		});
 		const logger = makeLogger();
-		const getSchema = vi.fn().mockResolvedValue(emptySchema);
-		await runBootstrap('/tmp/tpl', services, getSchema, logger);
-		expect(collectionsInstance.createOne).toHaveBeenCalledTimes(3);
-		expect(itemsInstances['email_templates']!.createOne).toHaveBeenCalledTimes(
-			SEED_TEMPLATES.length,
+		await runBootstrap(dir, s as any, getSchema, logger);
+		const baseRow = s._stores.email_templates?.find((r: any) => r.template_key === 'base');
+		expect(baseRow.body).toBe('EXISTING');
+	});
+
+	it('is idempotent on a second call', async () => {
+		const s = makeServices();
+		const logger = makeLogger();
+		await runBootstrap(dir, s as any, getSchema, logger);
+		const before = s._stores.email_templates?.length;
+		await runBootstrap(dir, s as any, getSchema, logger);
+		expect(s._stores.email_templates?.length).toBe(before);
+	});
+
+	it('concurrent calls coalesce', async () => {
+		const s = makeServices();
+		const logger = makeLogger();
+		await Promise.all([
+			runBootstrap(dir, s as any, getSchema, logger),
+			runBootstrap(dir, s as any, getSchema, logger),
+		]);
+		expect(s._stores.email_templates?.length).toBe(5);
+	});
+
+	it('warns when RelationsService is missing', async () => {
+		const s = makeServices();
+		(s as any).RelationsService = undefined;
+		const logger = makeLogger();
+		await runBootstrap(dir, s as any, getSchema, logger);
+		expect(logger.warn).toHaveBeenCalledWith(
+			expect.stringContaining('RelationsService not available'),
 		);
-		expect(itemsInstances['email_template_variables']!.createOne).toHaveBeenCalledTimes(
-			SEED_VARIABLES.length,
+	});
+
+	it('skips relation when readOne finds existing', async () => {
+		const s = makeServices({
+			relations: {
+				readOne: async () => ({ collection: 'x', field: 'y' }),
+			},
+		});
+		const logger = makeLogger();
+		await runBootstrap(dir, s as any, getSchema, logger);
+		expect(s._relationsCreated.length).toBe(0);
+	});
+
+	it('logs warning when relation creation fails', async () => {
+		const s = makeServices({
+			relations: {
+				readOne: async () => {
+					throw new Error('nope');
+				},
+				createOne: async () => {
+					throw new Error('duplicate');
+				},
+			},
+		});
+		const logger = makeLogger();
+		await runBootstrap(dir, s as any, getSchema, logger);
+		expect(logger.warn).toHaveBeenCalledWith(
+			expect.stringContaining('Relation create skipped'),
 		);
+	});
+
+	it('skips collection creation when exists', async () => {
+		const s = makeServices({
+			collections: {
+				readOne: async () => ({ collection: 'x' }),
+			},
+		});
+		const logger = makeLogger();
+		await runBootstrap(dir, s as any, getSchema, logger);
+		expect(s._collectionsCreated.length).toBe(0);
+	});
+
+	it('skips translation seed when parent missing', async () => {
+		const s = makeServices();
+		const logger = makeLogger();
+		const originalItemsService = (s as any).ItemsService;
+		(s as any).ItemsService = function (name: string, opts: any) {
+			const svc = originalItemsService(name, opts);
+			if (name === 'email_templates') {
+				svc.createOne = async () => undefined as any;
+			}
+			return svc;
+		};
+		await runBootstrap(dir, s as any, getSchema, logger);
+		expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('parent row missing'));
+	});
+
+	it('exposes inFlight getter while running and null after', async () => {
+		const s = makeServices();
+		const logger = makeLogger();
+		const p = runBootstrap(dir, s as any, getSchema, logger);
+		expect(__INTERNAL__.inFlight).toBeInstanceOf(Promise);
+		await p;
+		expect(__INTERNAL__.inFlight).toBeNull();
 		expect(__INTERNAL__.ran).toBe(true);
 	});
 
-	it('skips collection creation when collections already exist', async () => {
-		const { services, collectionsInstance } = servicesWith({ collectionsExists: true });
-		await runBootstrap('', services, vi.fn().mockResolvedValue(emptySchema), makeLogger());
-		expect(collectionsInstance.createOne).not.toHaveBeenCalled();
-	});
-
-	it('skips seeding rows that already exist', async () => {
-		const { services, itemsInstances } = servicesWith({
-			collectionsExists: true,
-			existingTemplates: [{ id: '1' }],
-			existingVariables: [{ id: '2' }],
-		});
-		await runBootstrap('', services, vi.fn().mockResolvedValue(emptySchema), makeLogger());
-		expect(itemsInstances['email_templates']!.createOne).not.toHaveBeenCalled();
-		expect(itemsInstances['email_template_variables']!.createOne).not.toHaveBeenCalled();
-	});
-
-	it('returns immediately when already run', async () => {
-		const { services, collectionsInstance } = servicesWith({ collectionsExists: true });
-		const logger = makeLogger();
-		await runBootstrap('', services, vi.fn().mockResolvedValue(emptySchema), logger);
-		collectionsInstance.readOne.mockClear();
-		await runBootstrap('', services, vi.fn().mockResolvedValue(emptySchema), logger);
-		expect(collectionsInstance.readOne).not.toHaveBeenCalled();
-	});
-
-	it('dedupes concurrent invocations via the in-flight lock', async () => {
-		const { services, collectionsInstance } = servicesWith({ collectionsExists: true });
-		const logger = makeLogger();
-		const getSchema = vi.fn().mockResolvedValue(emptySchema);
-		const [a, b] = await Promise.all([
-			runBootstrap('', services, getSchema, logger),
-			runBootstrap('', services, getSchema, logger),
-		]);
-		expect(a).toBe(b); // both resolved via the same promise
-		// readOne only called once per collection (3 total) despite 2 invocations
-		expect(collectionsInstance.readOne).toHaveBeenCalledTimes(3);
-	});
-
-	it('swallows errors and logs them (non-strict)', async () => {
-		const services = makeServices({
+	it('logs error and does not throw when bootstrap pipeline explodes', async () => {
+		const s = makeServices({
 			collections: {
-				readOne: vi.fn().mockRejectedValue(new Error('x')),
-				createOne: vi.fn().mockRejectedValue(new Error('perm denied')),
+				readOne: async () => {
+					throw new Error('no coll');
+				},
+				createOne: async () => {
+					throw new Error('boom');
+				},
 			},
-		}).services;
+		});
 		const logger = makeLogger();
-		await runBootstrap('', services, vi.fn().mockResolvedValue(emptySchema), logger);
-		expect(logger.error).toHaveBeenCalled();
-		expect(__INTERNAL__.ran).toBe(false);
-	});
-
-	it('exposes collection name constants', () => {
-		expect(__INTERNAL__.collections.TEMPLATES_COLLECTION).toBe('email_templates');
-		expect(__INTERNAL__.collections.VARIABLES_COLLECTION).toBe('email_template_variables');
-		expect(__INTERNAL__.collections.SYNC_AUDIT_COLLECTION).toBe('email_template_sync_audit');
+		await runBootstrap(dir, s as any, getSchema, logger);
+		expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('Bootstrap failed'));
 	});
 });

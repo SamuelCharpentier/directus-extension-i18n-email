@@ -1,140 +1,253 @@
 import { describe, it, expect } from 'vitest';
-import { makeServices, emptySchema } from './helpers';
+import { makeServices, makeSchema } from './helpers';
 import {
 	fetchDefaultLang,
 	fetchUserLang,
 	fetchProjectName,
 	fetchTemplateRow,
 	fetchAllTemplateRows,
+	fetchTranslationRow,
+	fetchTemplateWithTranslation,
 	fetchTemplateVariables,
 	fetchAdminEmails,
+	fetchRecipientUser,
 } from '../src/directus';
-import { vi } from 'vitest';
 
 describe('fetchDefaultLang', () => {
-	it('returns the primary subtag of directus_settings.default_language', async () => {
-		const { services } = makeServices({
-			settings: { readSingleton: vi.fn().mockResolvedValue({ default_language: 'fr-CA' }) },
+	it('strips region suffix', async () => {
+		const s = makeServices({
+			settings: { readSingleton: async () => ({ default_language: 'fr-CA' }) },
 		});
-		expect(await fetchDefaultLang(services, emptySchema, {})).toBe('fr');
+		expect(await fetchDefaultLang(s as any, makeSchema(), {})).toBe('fr');
 	});
-
-	it('falls back to env I18N_EMAIL_FALLBACK_LANG when setting is missing', async () => {
-		const { services } = makeServices({
-			settings: { readSingleton: vi.fn().mockResolvedValue({}) },
+	it('uses env fallback when unset', async () => {
+		const s = makeServices({
+			settings: { readSingleton: async () => ({ default_language: null }) },
 		});
 		expect(
-			await fetchDefaultLang(services, emptySchema, { I18N_EMAIL_FALLBACK_LANG: 'es' }),
-		).toBe('es');
+			await fetchDefaultLang(s as any, makeSchema(), { I18N_EMAIL_FALLBACK_LANG: 'de' }),
+		).toBe('de');
 	});
-
-	it('falls back to hardcoded "en" when nothing else is configured', async () => {
-		const { services } = makeServices({
-			settings: { readSingleton: vi.fn().mockResolvedValue({}) },
+	it('hardcoded default when env missing', async () => {
+		const s = makeServices({
+			settings: { readSingleton: async () => ({ default_language: '' }) },
 		});
-		expect(await fetchDefaultLang(services, emptySchema, {})).toBe('en');
+		expect(await fetchDefaultLang(s as any, makeSchema(), {})).toBe('en');
 	});
 });
 
 describe('fetchUserLang', () => {
-	it('returns the primary subtag of a matched user', async () => {
-		const { services } = makeServices({
-			items: {
-				directus_users: { readByQuery: vi.fn().mockResolvedValue([{ language: 'fr-CA' }]) },
-			},
+	it('returns primary tag', async () => {
+		const s = makeServices({
+			items: { directus_users: { rows: [{ email: 'a@b.co', language: 'fr-CA' }] } },
 		});
-		expect(await fetchUserLang('x@y.com', services, emptySchema)).toBe('fr');
+		expect(await fetchUserLang('a@b.co', s as any, makeSchema())).toBe('fr');
 	});
-
-	it('returns null when no user matches', async () => {
-		const { services } = makeServices({
-			items: { directus_users: { readByQuery: vi.fn().mockResolvedValue([]) } },
-		});
-		expect(await fetchUserLang('x@y.com', services, emptySchema)).toBe(null);
+	it('returns null when user missing', async () => {
+		const s = makeServices({ items: { directus_users: { rows: [] } } });
+		expect(await fetchUserLang('x@y.co', s as any, makeSchema())).toBeNull();
 	});
-
-	it('returns null when the user row has no language', async () => {
-		const { services } = makeServices({
-			items: { directus_users: { readByQuery: vi.fn().mockResolvedValue([{}]) } },
+	it('returns null when language empty', async () => {
+		const s = makeServices({
+			items: { directus_users: { rows: [{ email: 'a@b.co', language: '' }] } },
 		});
-		expect(await fetchUserLang('x@y.com', services, emptySchema)).toBe(null);
+		expect(await fetchUserLang('a@b.co', s as any, makeSchema())).toBeNull();
+	});
+	it('returns null when language primary tag is empty (leading dash)', async () => {
+		const s = makeServices({
+			items: { directus_users: { rows: [{ email: 'a@b.co', language: '-CA' }] } },
+		});
+		expect(await fetchUserLang('a@b.co', s as any, makeSchema())).toBeNull();
 	});
 });
 
 describe('fetchProjectName', () => {
-	it('returns the project_name string when present', async () => {
-		const { services } = makeServices({
-			settings: { readSingleton: vi.fn().mockResolvedValue({ project_name: 'Acme' }) },
+	it('returns name', async () => {
+		const s = makeServices({
+			settings: { readSingleton: async () => ({ project_name: 'Acme' }) },
 		});
-		expect(await fetchProjectName(services, emptySchema)).toBe('Acme');
+		expect(await fetchProjectName(s as any, makeSchema())).toBe('Acme');
 	});
-
-	it('returns null for empty or missing values', async () => {
-		const { services: s1 } = makeServices({
-			settings: { readSingleton: vi.fn().mockResolvedValue({ project_name: '' }) },
-		});
-		expect(await fetchProjectName(s1, emptySchema)).toBe(null);
-		const { services: s2 } = makeServices({
-			settings: { readSingleton: vi.fn().mockResolvedValue({}) },
-		});
-		expect(await fetchProjectName(s2, emptySchema)).toBe(null);
+	it('returns null when missing', async () => {
+		const s = makeServices({ settings: { readSingleton: async () => ({ project_name: '' }) } });
+		expect(await fetchProjectName(s as any, makeSchema())).toBeNull();
 	});
 });
 
 describe('fetchTemplateRow', () => {
-	it('returns the first row from readByQuery', async () => {
-		const row = { template_key: 'k', language: 'fr' };
-		const { services } = makeServices({
-			items: { email_templates: { readByQuery: vi.fn().mockResolvedValue([row]) } },
+	it('filters by key + active', async () => {
+		const s = makeServices({
+			items: {
+				email_templates: {
+					rows: [
+						{ id: '1', template_key: 'x', is_active: true },
+						{ id: '2', template_key: 'y', is_active: true },
+					],
+				},
+			},
 		});
-		expect(await fetchTemplateRow('k', 'fr', services, emptySchema)).toEqual(row);
-	});
-
-	it('returns null when no row matches', async () => {
-		const { services } = makeServices({
-			items: { email_templates: { readByQuery: vi.fn().mockResolvedValue([]) } },
-		});
-		expect(await fetchTemplateRow('k', 'fr', services, emptySchema)).toBe(null);
+		const r = await fetchTemplateRow('x', s as any, makeSchema());
+		expect(r?.id).toBe('1');
+		const missing = await fetchTemplateRow('zz', s as any, makeSchema());
+		expect(missing).toBeNull();
 	});
 });
 
 describe('fetchAllTemplateRows', () => {
-	it('returns all active rows', async () => {
-		const rows = [{ id: '1' }, { id: '2' }];
-		const { services } = makeServices({
-			items: { email_templates: { readByQuery: vi.fn().mockResolvedValue(rows) } },
+	it('returns all rows', async () => {
+		const s = makeServices({
+			items: { email_templates: { rows: [{ id: '1' }, { id: '2' }] } },
 		});
-		expect(await fetchAllTemplateRows(services, emptySchema)).toEqual(rows);
+		expect((await fetchAllTemplateRows(s as any, makeSchema())).length).toBe(2);
+	});
+});
+
+describe('fetchTranslationRow', () => {
+	it('returns a translation for template+lang', async () => {
+		const s = makeServices({
+			items: {
+				email_template_translations: {
+					rows: [
+						{ id: 't1', email_templates_id: '1', languages_code: 'en' },
+						{ id: 't2', email_templates_id: '1', languages_code: 'fr' },
+					],
+				},
+			},
+		});
+		const r = await fetchTranslationRow('1', 'fr', s as any, makeSchema());
+		expect(r?.id).toBe('t2');
+		const missing = await fetchTranslationRow('1', 'de', s as any, makeSchema());
+		expect(missing).toBeNull();
+	});
+});
+
+describe('fetchTemplateWithTranslation', () => {
+	const build = () =>
+		makeServices({
+			items: {
+				email_templates: {
+					rows: [{ id: '1', template_key: 'x', is_active: true }],
+				},
+				email_template_translations: {
+					rows: [{ id: 'ten', email_templates_id: '1', languages_code: 'en' }],
+				},
+			},
+		});
+	it('falls back to default lang', async () => {
+		const s = build();
+		const r = await fetchTemplateWithTranslation('x', 'fr', 'en', s as any, makeSchema());
+		expect(r?.translation?.id).toBe('ten');
+	});
+	it('returns null when template missing', async () => {
+		const s = build();
+		const r = await fetchTemplateWithTranslation('zz', 'fr', 'en', s as any, makeSchema());
+		expect(r).toBeNull();
+	});
+	it('returns {translation:null} when none found even with fallback', async () => {
+		const s = makeServices({
+			items: {
+				email_templates: {
+					rows: [{ id: '1', template_key: 'x', is_active: true }],
+				},
+				email_template_translations: { rows: [] },
+			},
+		});
+		const r = await fetchTemplateWithTranslation('x', 'fr', 'en', s as any, makeSchema());
+		expect(r?.translation).toBeNull();
+	});
+	it('returns direct translation without fallback when effective == default', async () => {
+		const s = build();
+		const r = await fetchTemplateWithTranslation('x', 'en', 'en', s as any, makeSchema());
+		expect(r?.translation?.id).toBe('ten');
+	});
+	it('returns null translation if row has no id', async () => {
+		const s = makeServices({
+			items: {
+				email_templates: { rows: [{ template_key: 'x', is_active: true }] },
+			},
+		});
+		expect(
+			await fetchTemplateWithTranslation('x', 'en', 'en', s as any, makeSchema()),
+		).toBeNull();
 	});
 });
 
 describe('fetchTemplateVariables', () => {
-	it('returns registry rows for a template key', async () => {
-		const rows = [{ variable_name: 'url', is_required: true }];
-		const { services } = makeServices({
-			items: { email_template_variables: { readByQuery: vi.fn().mockResolvedValue(rows) } },
+	it('filters by template_key', async () => {
+		const s = makeServices({
+			items: {
+				email_template_variables: {
+					rows: [
+						{ template_key: 'x', variable_name: 'a', is_required: true },
+						{ template_key: 'y', variable_name: 'b', is_required: true },
+					],
+				},
+			},
 		});
-		expect(await fetchTemplateVariables('k', services, emptySchema)).toEqual(rows);
+		const r = await fetchTemplateVariables('x', s as any, makeSchema());
+		expect(r.length).toBe(1);
+		expect(r[0]?.variable_name).toBe('a');
 	});
 });
 
 describe('fetchAdminEmails', () => {
-	it('returns emails of active admin users, filtering out non-strings', async () => {
-		const { services } = makeServices({
+	it('returns emails of admins', async () => {
+		const s = makeServices({
 			items: {
 				directus_users: {
-					readByQuery: vi
-						.fn()
-						.mockResolvedValue([
-							{ email: 'a@x.com' },
-							{ email: '' },
-							{ email: null },
-							{},
-							{ email: 'b@x.com' },
-						]),
+					rows: [
+						{ email: 'a@x.co', status: 'active', role: { admin_access: true } },
+						{ email: 'b@x.co', status: 'active', role: { admin_access: false } },
+						{ email: null, status: 'active', role: { admin_access: true } },
+					],
+					readByQuery: async () => [{ email: 'a@x.co' }, { email: null }, { email: '' }],
 				},
 			},
 		});
-		expect(await fetchAdminEmails(services, emptySchema)).toEqual(['a@x.com', 'b@x.com']);
+		const r = await fetchAdminEmails(s as any, makeSchema());
+		expect(r).toEqual(['a@x.co']);
+	});
+});
+
+describe('fetchRecipientUser', () => {
+	it('returns user shape', async () => {
+		const s = makeServices({
+			items: {
+				directus_users: {
+					rows: [
+						{
+							id: 7,
+							first_name: 'A',
+							last_name: 'B',
+							email: 'a@b.co',
+							language: 'fr',
+						},
+					],
+				},
+			},
+		});
+		const u = await fetchRecipientUser('a@b.co', s as any, makeSchema());
+		expect(u).toEqual({
+			id: '7',
+			first_name: 'A',
+			last_name: 'B',
+			email: 'a@b.co',
+			language: 'fr',
+		});
+	});
+	it('returns null when missing', async () => {
+		const s = makeServices({ items: { directus_users: { rows: [] } } });
+		expect(await fetchRecipientUser('x@y.co', s as any, makeSchema())).toBeNull();
+	});
+	it('coerces missing first/last/lang to null', async () => {
+		const s = makeServices({
+			items: {
+				directus_users: { rows: [{ id: 1, email: 'a@b.co' }] },
+			},
+		});
+		const u = await fetchRecipientUser('a@b.co', s as any, makeSchema());
+		expect(u?.first_name).toBeNull();
+		expect(u?.last_name).toBeNull();
+		expect(u?.language).toBeNull();
 	});
 });
