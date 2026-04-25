@@ -1,7 +1,9 @@
 import {
 	TEMPLATES_COLLECTION,
+	TRANSLATIONS_COLLECTION,
 	VARIABLES_COLLECTION,
 	SYNC_AUDIT_COLLECTION,
+	LANGUAGES_COLLECTION,
 	TEMPLATE_CATEGORIES,
 } from './constants';
 
@@ -19,7 +21,15 @@ type CollectionPayload = {
 	fields: FieldPayload[];
 };
 
-const idField: FieldPayload = {
+export type RelationPayload = {
+	collection: string;
+	field: string;
+	related_collection: string;
+	meta?: Record<string, unknown>;
+	schema?: Record<string, unknown>;
+};
+
+const uuidPkField: FieldPayload = {
 	field: 'id',
 	type: 'uuid',
 	meta: {
@@ -53,12 +63,59 @@ const updatedAtField: FieldPayload = {
 	},
 };
 
+// ─────────────────────────── languages ───────────────────────────
+export const LANGUAGES_COLLECTION_PAYLOAD: CollectionPayload = {
+	collection: LANGUAGES_COLLECTION,
+	meta: {
+		icon: 'translate',
+		note: 'Supported languages for email template translations.',
+		display_template: '{{ name }} ({{ code }})',
+		sort_field: 'code',
+	},
+	schema: { name: LANGUAGES_COLLECTION },
+	fields: [
+		{
+			field: 'code',
+			type: 'string',
+			meta: {
+				interface: 'input',
+				required: true,
+				width: 'half',
+				note: 'ISO short language code, e.g. "en" or "fr".',
+			},
+			schema: { is_primary_key: true, is_nullable: false, has_auto_increment: false },
+		},
+		{
+			field: 'name',
+			type: 'string',
+			meta: { interface: 'input', required: true, width: 'half' },
+			schema: { is_nullable: false },
+		},
+		{
+			field: 'direction',
+			type: 'string',
+			meta: {
+				interface: 'select-dropdown',
+				options: {
+					choices: [
+						{ text: 'Left-to-Right', value: 'ltr' },
+						{ text: 'Right-to-Left', value: 'rtl' },
+					],
+				},
+				width: 'half',
+			},
+			schema: { is_nullable: false, default_value: 'ltr' },
+		},
+	],
+};
+
+// ─────────────────────────── email_templates ───────────────────────────
 export const EMAIL_TEMPLATES_COLLECTION: CollectionPayload = {
 	collection: TEMPLATES_COLLECTION,
 	meta: {
 		icon: 'mail',
-		note: 'Multilingual email templates. Source of truth for i18n-email extension.',
-		display_template: '{{ template_key }} · {{ language }}',
+		note: 'Email templates. Liquid body is the source of truth; translations attached as o2m.',
+		display_template: '{{ template_key }}',
 		archive_field: 'is_active',
 		archive_value: 'false',
 		unarchive_value: 'true',
@@ -66,7 +123,7 @@ export const EMAIL_TEMPLATES_COLLECTION: CollectionPayload = {
 	},
 	schema: { name: TEMPLATES_COLLECTION },
 	fields: [
-		idField,
+		uuidPkField,
 		{
 			field: 'template_key',
 			type: 'string',
@@ -76,18 +133,7 @@ export const EMAIL_TEMPLATES_COLLECTION: CollectionPayload = {
 				width: 'half',
 				note: 'Machine identifier, e.g. "password-reset".',
 			},
-			schema: { is_nullable: false },
-		},
-		{
-			field: 'language',
-			type: 'string',
-			meta: {
-				interface: 'input',
-				required: true,
-				width: 'half',
-				note: 'ISO short code, e.g. "fr" or "en".',
-			},
-			schema: { is_nullable: false },
+			schema: { is_nullable: false, is_unique: true },
 		},
 		{
 			field: 'category',
@@ -109,31 +155,39 @@ export const EMAIL_TEMPLATES_COLLECTION: CollectionPayload = {
 			schema: { is_nullable: false, default_value: true },
 		},
 		{
-			field: 'subject',
-			type: 'string',
-			meta: { interface: 'input', width: 'full' },
-			schema: { is_nullable: true },
-		},
-		{
-			field: 'from_name',
-			type: 'string',
+			field: 'is_protected',
+			type: 'boolean',
 			meta: {
-				interface: 'input',
+				interface: 'boolean',
 				width: 'half',
-				note: 'Overrides the sender display name for this template.',
+				readonly: true,
+				note: 'Protected rows cannot be deleted.',
 			},
-			schema: { is_nullable: true },
+			schema: { is_nullable: false, default_value: false },
 		},
 		{
-			field: 'strings',
-			type: 'json',
+			field: 'body',
+			type: 'text',
 			meta: {
 				interface: 'input-code',
-				options: { language: 'JSON' },
-				note: 'Flat map of i18n keys injected as {{ i18n.* }} in the Liquid template.',
+				options: { language: 'htmlmixed', lineNumber: true },
+				note: 'Full Liquid template (e.g. {% layout "base" %}{% block content %}…{% endblock %}).',
 				width: 'full',
 			},
-			schema: { is_nullable: false, default_value: '{}' },
+			schema: { is_nullable: false, default_value: '' },
+		},
+		{
+			field: 'translations',
+			type: 'alias',
+			meta: {
+				interface: 'translations',
+				special: ['translations'],
+				options: {
+					languageField: 'languages_code',
+					defaultOpenSplitView: true,
+				},
+				width: 'full',
+			},
 		},
 		{
 			field: 'description',
@@ -142,26 +196,9 @@ export const EMAIL_TEMPLATES_COLLECTION: CollectionPayload = {
 			schema: { is_nullable: true },
 		},
 		{
-			field: 'is_protected',
-			type: 'boolean',
-			meta: {
-				interface: 'boolean',
-				width: 'half',
-				readonly: true,
-				note: 'Protected templates cannot be deleted.',
-			},
-			schema: { is_nullable: false, default_value: false },
-		},
-		{
-			field: 'version',
-			type: 'integer',
-			meta: { interface: 'input', width: 'half', readonly: true },
-			schema: { is_nullable: false, default_value: 1 },
-		},
-		{
 			field: 'checksum',
 			type: 'string',
-			meta: { interface: 'input', width: 'full', readonly: true, hidden: true },
+			meta: { interface: 'input', width: 'half', readonly: true, hidden: true },
 			schema: { is_nullable: true },
 		},
 		{
@@ -175,6 +212,72 @@ export const EMAIL_TEMPLATES_COLLECTION: CollectionPayload = {
 	],
 };
 
+// ─────────────────────────── email_template_translations ───────────────────────────
+export const EMAIL_TEMPLATE_TRANSLATIONS_COLLECTION: CollectionPayload = {
+	collection: TRANSLATIONS_COLLECTION,
+	meta: {
+		icon: 'translate',
+		note: 'Per-language subject, from_name, and i18n strings for an email template.',
+		display_template: '{{ email_templates_id.template_key }} · {{ languages_code }}',
+		sort_field: 'languages_code',
+		hidden: true,
+	},
+	schema: { name: TRANSLATIONS_COLLECTION },
+	fields: [
+		uuidPkField,
+		{
+			field: 'email_templates_id',
+			type: 'uuid',
+			meta: {
+				interface: 'select-dropdown-m2o',
+				special: ['m2o'],
+				required: true,
+				width: 'half',
+			},
+			schema: { is_nullable: false },
+		},
+		{
+			field: 'languages_code',
+			type: 'string',
+			meta: {
+				interface: 'select-dropdown-m2o',
+				special: ['m2o'],
+				required: true,
+				width: 'half',
+			},
+			schema: { is_nullable: false },
+		},
+		{
+			field: 'subject',
+			type: 'string',
+			meta: { interface: 'input', width: 'full' },
+			schema: { is_nullable: true },
+		},
+		{
+			field: 'from_name',
+			type: 'string',
+			meta: {
+				interface: 'input',
+				width: 'half',
+				note: 'Optional sender display name override for this language.',
+			},
+			schema: { is_nullable: true },
+		},
+		{
+			field: 'strings',
+			type: 'json',
+			meta: {
+				interface: 'input-code',
+				options: { language: 'JSON' },
+				note: 'Flat key→string map. Injected into Liquid as {{ i18n.* }}.',
+				width: 'full',
+			},
+			schema: { is_nullable: false, default_value: '{}' },
+		},
+	],
+};
+
+// ─────────────────────────── email_template_variables ───────────────────────────
 export const EMAIL_TEMPLATE_VARIABLES_COLLECTION: CollectionPayload = {
 	collection: VARIABLES_COLLECTION,
 	meta: {
@@ -185,7 +288,7 @@ export const EMAIL_TEMPLATE_VARIABLES_COLLECTION: CollectionPayload = {
 	},
 	schema: { name: VARIABLES_COLLECTION },
 	fields: [
-		idField,
+		uuidPkField,
 		{
 			field: 'template_key',
 			type: 'string',
@@ -225,25 +328,20 @@ export const EMAIL_TEMPLATE_VARIABLES_COLLECTION: CollectionPayload = {
 	],
 };
 
+// ─────────────────────────── email_template_sync_audit ───────────────────────────
 export const EMAIL_TEMPLATE_SYNC_AUDIT_COLLECTION: CollectionPayload = {
 	collection: SYNC_AUDIT_COLLECTION,
 	meta: {
 		icon: 'history',
-		note: 'Audit trail of template filesystem re-syncs triggered by integrity mismatches.',
-		display_template: '{{ template_key }} · {{ language }} · {{ reason }}',
+		note: 'Audit trail of template filesystem syncs.',
+		display_template: '{{ template_key }} · {{ action }}',
 		sort_field: '-created_at',
 	},
 	schema: { name: SYNC_AUDIT_COLLECTION },
 	fields: [
-		idField,
+		uuidPkField,
 		{
 			field: 'template_key',
-			type: 'string',
-			meta: { interface: 'input', required: true, width: 'half', readonly: true },
-			schema: { is_nullable: false },
-		},
-		{
-			field: 'language',
 			type: 'string',
 			meta: { interface: 'input', required: true, width: 'half', readonly: true },
 			schema: { is_nullable: false },
@@ -257,15 +355,42 @@ export const EMAIL_TEMPLATE_SYNC_AUDIT_COLLECTION: CollectionPayload = {
 		{
 			field: 'action',
 			type: 'string',
-			meta: { interface: 'input', width: 'full', readonly: true },
+			meta: { interface: 'input', width: 'half', readonly: true },
 			schema: { is_nullable: true },
 		},
 		createdAtField,
 	],
 };
 
+/** Order matters: parents first, then children that reference them. */
 export const ALL_COLLECTIONS: readonly CollectionPayload[] = [
+	LANGUAGES_COLLECTION_PAYLOAD,
 	EMAIL_TEMPLATES_COLLECTION,
+	EMAIL_TEMPLATE_TRANSLATIONS_COLLECTION,
 	EMAIL_TEMPLATE_VARIABLES_COLLECTION,
 	EMAIL_TEMPLATE_SYNC_AUDIT_COLLECTION,
+];
+
+/** Relations registered after collections exist. */
+export const ALL_RELATIONS: readonly RelationPayload[] = [
+	{
+		collection: TRANSLATIONS_COLLECTION,
+		field: 'email_templates_id',
+		related_collection: TEMPLATES_COLLECTION,
+		meta: {
+			one_field: 'translations',
+			sort_field: null,
+			one_deselect_action: 'delete',
+		},
+		schema: {
+			on_delete: 'CASCADE',
+		},
+	},
+	{
+		collection: TRANSLATIONS_COLLECTION,
+		field: 'languages_code',
+		related_collection: LANGUAGES_COLLECTION,
+		meta: { sort_field: null },
+		schema: { on_delete: 'NO ACTION' },
+	},
 ];

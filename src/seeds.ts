@@ -1,17 +1,125 @@
-import type { SeedTemplate, SeedVariable } from './types';
+import type { SeedLanguage, SeedTemplate, SeedTranslation, SeedVariable } from './types';
 import { ADMIN_ERROR_KEY, BASE_LAYOUT_KEY } from './constants';
 
-/**
- * Seed data for the protected system templates, in FR and EN.
- * Content mirrors the historical examples/templates/locales/*.json so
- * existing installations get the same strings.
- */
+// ─────────────────────────── Default Liquid bodies ───────────────────────────
+// These match the files shipped under examples/templates/*.liquid. On
+// bootstrap, if an on-disk file already exists at EMAIL_TEMPLATES_PATH/<key>.liquid
+// and no DB row exists for that key, the disk contents take precedence so
+// existing admin edits from earlier filesystem-based installs are preserved.
+
+export const DEFAULT_BODY_BASE = `<!DOCTYPE html>
+<html lang="{{ i18n.base.lang | default: 'en' }}">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{ projectName }}</title>
+  </head>
+  <body>
+    <div class="container">
+      {% block content %}{{ html }}{% endblock %}
+      <p class="footer-note">{{ i18n.base.footer_note }}</p>
+    </div>
+    <div class="footer">
+      <h3>{{ i18n.base.org_name }}</h3>
+      <p>{{ i18n.base.org_address }}</p>
+      <p>{{ i18n.base.org_url }}</p>
+      {% block footer %}{% endblock %}
+    </div>
+  </body>
+</html>
+`;
+
+export const DEFAULT_BODY_PASSWORD_RESET = `{% layout "base" %}
+{% block content %}
+<h1>{{ i18n.heading }}</h1>
+<p>{{ i18n.body }}</p>
+<p class="button-wrapper">
+  <a class="button" rel="noopener" target="_blank" href="{{ url }}">{{ i18n.cta }}</a>
+</p>
+<p>{{ i18n.expiry_notice }}</p>
+{% endblock %}
+`;
+
+export const DEFAULT_BODY_USER_INVITATION = `{% layout "base" %}
+{% block content %}
+<h1>{{ i18n.heading }}</h1>
+<p>{{ i18n.body }}</p>
+<p class="button-wrapper">
+  <a class="button" rel="noopener" target="_blank" href="{{ url }}">{{ i18n.cta }}</a>
+</p>
+{% endblock %}
+`;
+
+export const DEFAULT_BODY_USER_REGISTRATION = `{% layout "base" %}
+{% block content %}
+<h1>{{ i18n.heading }}</h1>
+<p>{{ i18n.body }}</p>
+<p class="button-wrapper">
+  <a class="button" rel="noopener" target="_blank" href="{{ url }}">{{ i18n.cta }}</a>
+</p>
+{% endblock %}
+`;
+
+export const DEFAULT_BODY_ADMIN_ERROR = `{% layout "base" %}
+{% block content %}
+<h1>{{ i18n.heading }}</h1>
+<p>{{ i18n.body }}</p>
+<table>
+  <tr><td>{{ i18n.reason_label }}</td><td>{{ reason }}</td></tr>
+  <tr><td>{{ i18n.timestamp_label }}</td><td>{{ timestamp }}</td></tr>
+  <tr><td>{{ i18n.context_label }}</td><td><pre>{{ context }}</pre></td></tr>
+</table>
+{% endblock %}
+`;
+
+// ─────────────────────────── Languages ───────────────────────────
+export const SEED_LANGUAGES: SeedLanguage[] = [
+	{ code: 'en', name: 'English', direction: 'ltr' },
+	{ code: 'fr', name: 'Français', direction: 'ltr' },
+];
+
+// ─────────────────────────── Template rows (language-agnostic) ───────────────────────────
 export const SEED_TEMPLATES: SeedTemplate[] = [
-	// ───── base layout strings (no subject, used only for i18n.base.* in base.liquid) ─────
 	{
 		template_key: BASE_LAYOUT_KEY,
-		language: 'fr',
+		category: 'layout',
+		body: DEFAULT_BODY_BASE,
+		description: 'Shared layout — other templates extend it via `{% layout "base" %}`.',
+	},
+	{
+		template_key: 'password-reset',
 		category: 'system',
+		body: DEFAULT_BODY_PASSWORD_RESET,
+		description: 'Sent when a user requests a password reset (Directus system email).',
+	},
+	{
+		template_key: 'user-invitation',
+		category: 'system',
+		body: DEFAULT_BODY_USER_INVITATION,
+		description: 'Sent when an admin invites a new user (Directus system email).',
+	},
+	{
+		template_key: 'user-registration',
+		category: 'system',
+		body: DEFAULT_BODY_USER_REGISTRATION,
+		description:
+			'Sent when a user registers and needs to verify their email (Directus system email).',
+	},
+	{
+		template_key: ADMIN_ERROR_KEY,
+		category: 'system',
+		body: DEFAULT_BODY_ADMIN_ERROR,
+		description:
+			'Internal — sent to all admin-role users when the extension fails to dispatch an email.',
+	},
+];
+
+// ─────────────────────────── Translations (per template × language) ───────────────────────────
+export const SEED_TRANSLATIONS: SeedTranslation[] = [
+	// base layout strings
+	{
+		template_key: BASE_LAYOUT_KEY,
+		languages_code: 'fr',
 		subject: '',
 		from_name: 'Votre organisation',
 		strings: {
@@ -20,13 +128,12 @@ export const SEED_TEMPLATES: SeedTemplate[] = [
 			org_name: 'Votre organisation',
 			org_address: '123, rue Exemple, Ville, Pays',
 			org_url: 'exemple.com',
+			lang: 'fr',
 		},
-		description: 'Shared layout strings injected into every email as {{ i18n.base.* }}.',
 	},
 	{
 		template_key: BASE_LAYOUT_KEY,
-		language: 'en',
-		category: 'system',
+		languages_code: 'en',
 		subject: '',
 		from_name: 'Your Organization',
 		strings: {
@@ -34,15 +141,14 @@ export const SEED_TEMPLATES: SeedTemplate[] = [
 			org_name: 'Your Organization',
 			org_address: '123 Example Street, City, Country',
 			org_url: 'example.com',
+			lang: 'en',
 		},
-		description: 'Shared layout strings injected into every email as {{ i18n.base.* }}.',
 	},
 
-	// ───── password-reset ─────
+	// password-reset
 	{
 		template_key: 'password-reset',
-		language: 'fr',
-		category: 'system',
+		languages_code: 'fr',
 		subject: 'Demande de réinitialisation du mot de passe',
 		from_name: null,
 		strings: {
@@ -51,12 +157,10 @@ export const SEED_TEMPLATES: SeedTemplate[] = [
 			cta: 'Réinitialiser mon mot de passe',
 			expiry_notice: 'Important : Ce lien expirera dans 24 heures.',
 		},
-		description: 'Sent when a user requests a password reset (Directus system email).',
 	},
 	{
 		template_key: 'password-reset',
-		language: 'en',
-		category: 'system',
+		languages_code: 'en',
 		subject: 'Password Reset Request',
 		from_name: null,
 		strings: {
@@ -65,14 +169,12 @@ export const SEED_TEMPLATES: SeedTemplate[] = [
 			cta: 'Reset Your Password',
 			expiry_notice: 'Important: This link will expire in 24 hours.',
 		},
-		description: 'Sent when a user requests a password reset (Directus system email).',
 	},
 
-	// ───── user-invitation ─────
+	// user-invitation
 	{
 		template_key: 'user-invitation',
-		language: 'fr',
-		category: 'system',
+		languages_code: 'fr',
 		subject: 'Vous avez été invité(e)',
 		from_name: null,
 		strings: {
@@ -80,12 +182,10 @@ export const SEED_TEMPLATES: SeedTemplate[] = [
 			body: 'Vous avez été invité(e) à rejoindre notre plateforme. Cliquez sur le bouton ci-dessous pour accepter cette invitation.',
 			cta: "Accepter l'invitation",
 		},
-		description: 'Sent when an admin invites a new user (Directus system email).',
 	},
 	{
 		template_key: 'user-invitation',
-		language: 'en',
-		category: 'system',
+		languages_code: 'en',
 		subject: 'You have been invited',
 		from_name: null,
 		strings: {
@@ -93,14 +193,12 @@ export const SEED_TEMPLATES: SeedTemplate[] = [
 			body: 'You have been invited to join. Click the button below to accept this invitation.',
 			cta: 'Accept Invitation',
 		},
-		description: 'Sent when an admin invites a new user (Directus system email).',
 	},
 
-	// ───── user-registration ─────
+	// user-registration
 	{
 		template_key: 'user-registration',
-		language: 'fr',
-		category: 'system',
+		languages_code: 'fr',
 		subject: 'Vérifiez votre adresse courriel',
 		from_name: null,
 		strings: {
@@ -108,13 +206,10 @@ export const SEED_TEMPLATES: SeedTemplate[] = [
 			body: 'Merci de vous être inscrit(e). Pour compléter votre inscription, veuillez vérifier votre adresse courriel en cliquant sur le lien ci-dessous.',
 			cta: 'Vérifier mon courriel',
 		},
-		description:
-			'Sent when a user registers and needs to verify their email (Directus system email).',
 	},
 	{
 		template_key: 'user-registration',
-		language: 'en',
-		category: 'system',
+		languages_code: 'en',
 		subject: 'Verify your email address',
 		from_name: null,
 		strings: {
@@ -122,31 +217,25 @@ export const SEED_TEMPLATES: SeedTemplate[] = [
 			body: 'Thanks for registering. To complete your registration, verify your email address by clicking the link below.',
 			cta: 'Verify Email',
 		},
-		description:
-			'Sent when a user registers and needs to verify their email (Directus system email).',
 	},
 
-	// ───── admin-error (internal failure notification) ─────
+	// admin-error
 	{
 		template_key: ADMIN_ERROR_KEY,
-		language: 'fr',
-		category: 'system',
+		languages_code: 'fr',
 		subject: '[Directus] Échec d’envoi de courriel : {{ reason }}',
 		from_name: null,
 		strings: {
 			heading: 'Échec d’envoi de courriel',
-			body: "L'extension i18n-email a rencontré une erreur lors du traitement d'un envoi de courriel. Veuillez examiner le contexte ci-dessous.",
+			body: "L'extension i18n-email a rencontré une erreur lors du traitement d'un envoi. Veuillez examiner le contexte ci-dessous.",
 			reason_label: 'Motif',
 			context_label: 'Contexte',
 			timestamp_label: 'Horodatage',
 		},
-		description:
-			'Internal — sent to all admin-role users when the extension fails to dispatch an email.',
 	},
 	{
 		template_key: ADMIN_ERROR_KEY,
-		language: 'en',
-		category: 'system',
+		languages_code: 'en',
 		subject: '[Directus] Email dispatch failure: {{ reason }}',
 		from_name: null,
 		strings: {
@@ -156,13 +245,11 @@ export const SEED_TEMPLATES: SeedTemplate[] = [
 			context_label: 'Context',
 			timestamp_label: 'Timestamp',
 		},
-		description:
-			'Internal — sent to all admin-role users when the extension fails to dispatch an email.',
 	},
 ];
 
+// ─────────────────────────── Variable registry ───────────────────────────
 export const SEED_VARIABLES: SeedVariable[] = [
-	// password-reset
 	{
 		template_key: 'password-reset',
 		variable_name: 'url',
@@ -171,14 +258,6 @@ export const SEED_VARIABLES: SeedVariable[] = [
 		example_value: 'https://example.com/reset?token=abc',
 	},
 	{
-		template_key: 'password-reset',
-		variable_name: 'projectName',
-		is_required: false,
-		description: 'Project name from directus_settings.project_name.',
-		example_value: 'My Project',
-	},
-	// user-invitation
-	{
 		template_key: 'user-invitation',
 		variable_name: 'url',
 		is_required: true,
@@ -186,28 +265,12 @@ export const SEED_VARIABLES: SeedVariable[] = [
 		example_value: 'https://example.com/accept?token=abc',
 	},
 	{
-		template_key: 'user-invitation',
-		variable_name: 'projectName',
-		is_required: false,
-		description: 'Project name from directus_settings.project_name.',
-		example_value: 'My Project',
-	},
-	// user-registration
-	{
 		template_key: 'user-registration',
 		variable_name: 'url',
 		is_required: true,
 		description: 'Email verification URL (supplied by Directus).',
 		example_value: 'https://example.com/verify?token=abc',
 	},
-	{
-		template_key: 'user-registration',
-		variable_name: 'projectName',
-		is_required: false,
-		description: 'Project name from directus_settings.project_name.',
-		example_value: 'My Project',
-	},
-	// admin-error
 	{
 		template_key: ADMIN_ERROR_KEY,
 		variable_name: 'reason',
@@ -230,3 +293,9 @@ export const SEED_VARIABLES: SeedVariable[] = [
 		example_value: '2026-04-24T12:00:00.000Z',
 	},
 ];
+
+/** Look up the default body shipped with the extension for a given key. */
+export function defaultBodyFor(templateKey: string): string | null {
+	const seed = SEED_TEMPLATES.find((s) => s.template_key === templateKey);
+	return seed ? seed.body : null;
+}
