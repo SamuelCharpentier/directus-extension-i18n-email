@@ -200,6 +200,27 @@ async function migrateRelationsMeta(
 		}
 
 		if (!rel.meta) continue;
+
+		// Skip the updateOne call entirely when the existing meta already
+		// matches what we want. Directus's RelationsService.updateOne
+		// unconditionally drops + re-adds the underlying FK constraint and
+		// routes through alterType(), which is brittle (it reads
+		// `relation.collection` / `relation.related_collection` against an
+		// in-memory schema snapshot and throws an unhandledRejection inside
+		// the knex transaction if any lookup misses). Avoiding the call on
+		// a fresh boot — where we just createOne'd the relation with the
+		// correct meta — sidesteps the crash entirely while still allowing
+		// drifted deployments to be patched on subsequent boots.
+		const metaMatches = (() => {
+			const cur = existing.meta;
+			if (!cur || typeof cur !== 'object') return false;
+			for (const [k, v] of Object.entries(rel.meta)) {
+				if ((cur as any)[k] !== v) return false;
+			}
+			return true;
+		})();
+		if (metaMatches) continue;
+
 		if (typeof svc.updateOne !== 'function') {
 			logger.warn(
 				'[i18n-email] RelationsService.updateOne not available — skipping relation migration.',
@@ -207,12 +228,14 @@ async function migrateRelationsMeta(
 			return;
 		}
 		try {
-			// Pass full relation payload (including `related_collection` and
-			// `schema`) — Directus's RelationsService.updateOne calls
-			// alterType() which dereferences `relation.related_collection`
-			// without a guard, throwing an unhandled rejection inside the
-			// knex transaction when only `meta` is supplied.
+			// Pass the full relation payload so Directus's alterType() can
+			// dereference `collection` / `related_collection` against the
+			// schema snapshot. Omitting these fields surfaces as
+			// "Cannot read properties of undefined (reading 'fields')"
+			// from inside the knex alterTable callback.
 			await svc.updateOne(rel.collection, rel.field, {
+				collection: rel.collection,
+				field: rel.field,
 				related_collection: rel.related_collection,
 				meta: rel.meta,
 				...(rel.schema ? { schema: rel.schema } : {}),

@@ -255,12 +255,14 @@ describe('runBootstrap', () => {
 	});
 
 	describe('relation migration', () => {
-		// Healthy existing relation: schema includes the expected on_delete so
-		// migrateRelationsMeta takes the meta-only update path (no FK rebuild).
+		// Healthy existing relation: schema includes the expected on_delete
+		// AND meta is intentionally drifted (empty object) so the
+		// metaMatches short-circuit lets the updateOne path fire.
 		const healthyReadOne = async (c: string, f: string) => ({
 			collection: c,
 			field: f,
 			schema: { on_delete: 'CASCADE' },
+			meta: {},
 		});
 
 		it('upserts meta on existing relations with junction_field cross-refs', async () => {
@@ -274,10 +276,45 @@ describe('runBootstrap', () => {
 			expect(s._relationsUpdated.length).toBe(2);
 			const fwd = s._relationsUpdated.find((u: any) => u.field === 'email_templates_id');
 			expect(fwd).toBeTruthy();
+			expect(fwd.data.collection).toBe('email_template_translations');
+			expect(fwd.data.related_collection).toBe('email_templates');
 			expect(fwd.data.meta.junction_field).toBe('languages_code');
 			const rev = s._relationsUpdated.find((u: any) => u.field === 'languages_code');
 			expect(rev).toBeTruthy();
+			expect(rev.data.related_collection).toBe('languages');
 			expect(rev.data.meta.junction_field).toBe('email_templates_id');
+		});
+
+		it('skips updateOne when existing relation meta already matches', async () => {
+			// Meta already carries the expected cross-refs → no need to
+			// touch the FK; updateOne MUST NOT be called (avoids triggering
+			// Directus's alterType crash on a steady-state boot).
+			const s = makeServices({
+				relations: {
+					readOne: async (c: string, f: string) => ({
+						collection: c,
+						field: f,
+						schema: { on_delete: 'CASCADE' },
+						meta:
+							f === 'email_templates_id'
+								? {
+										one_field: 'translations',
+										junction_field: 'languages_code',
+										sort_field: null,
+										one_deselect_action: 'delete',
+									}
+								: {
+										junction_field: 'email_templates_id',
+										sort_field: null,
+									},
+					}),
+				},
+			});
+			const logger = makeLogger();
+			await runBootstrap(dir, s as any, getSchema, logger);
+			expect(s._relationsUpdated.length).toBe(0);
+			expect(s._relationsDeleted.length).toBe(0);
+			expect(s._relationsCreated.length).toBe(0);
 		});
 
 		it('skips migration for relations that do not yet exist', async () => {
@@ -331,6 +368,7 @@ describe('runBootstrap', () => {
 						collection: c,
 						field: f,
 						schema: null,
+						meta: {},
 					}),
 				},
 			});
@@ -350,6 +388,7 @@ describe('runBootstrap', () => {
 						collection: c,
 						field: f,
 						schema: { on_delete: 'NO ACTION' },
+						meta: {},
 					}),
 				},
 			});
@@ -366,6 +405,7 @@ describe('runBootstrap', () => {
 						collection: c,
 						field: f,
 						schema: null,
+						meta: {},
 					}),
 					deleteOne: async () => {
 						throw new Error('locked');
