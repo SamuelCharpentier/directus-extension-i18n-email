@@ -15,22 +15,27 @@ function templatesPathFromEnv(env: Record<string, unknown>): string {
 const hook: HookConfig = ({ filter, action, init }, { services, logger, getSchema, env }) => {
 	logger.info('[i18n-email] Hook registered.');
 
-	// Try both `init('app.after')` (fires once the app is ready — more
-	// reliable than server.start in modern Directus) and server.start,
-	// plus a fire-and-forget eager call so we don't depend on a single
-	// lifecycle event. runBootstrap is idempotent.
-	const bootstrap = () => runBootstrap(templatesPathFromEnv(env), services, getSchema, logger);
+	// Bootstrap is intentionally fire-and-forget so it does NOT block
+	// Directus's startup pipeline. On a fresh DB the work (collection
+	// creation + seeds + body flush) takes 30-40s; awaiting it inside
+	// the `server.start` hook would freeze the API for that whole
+	// window. Each entry point below kicks the same idempotent
+	// `runBootstrap` promise (it coalesces concurrent calls) and
+	// returns immediately. Errors are logged inside runBootstrap.
+	const kickBootstrap = (): void => {
+		void runBootstrap(templatesPathFromEnv(env), services, getSchema, logger);
+	};
 
 	if (typeof init === 'function') {
 		try {
-			init('app.after', bootstrap);
+			init('app.after', () => kickBootstrap());
 		} catch {
 			// Older Directus versions don't support this init event — fine.
 		}
 	}
-	action('server.start', bootstrap);
+	action('server.start', () => kickBootstrap());
 	// Eager kick-off — runBootstrap guards against concurrent runs.
-	void bootstrap();
+	kickBootstrap();
 
 	// ──────────── email.send filter ────────────
 	filter('email.send', async (payload: unknown) => {
