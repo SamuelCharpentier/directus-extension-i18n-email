@@ -6,7 +6,7 @@
 
 ### 1.1 Name (working)
 
-- Package name: `directus-extension-email-i18n-core`
+- Package name: `directus-extension-i18n-email`
 - Scope: generic email template storage, sync, rendering, system-email override, and send logging
 
 ### 1.2 Goals
@@ -20,7 +20,7 @@
 
 ### 1.3 Non-goals
 
-- No domaon-specific template keys, variables, or status transitions
+- No domain-specific template keys, variables, or status transitions
 - No hardcoded domain rules
 - No front-end admin implementation inside the extension
 - No queue engine included (can integrate with external queue later)
