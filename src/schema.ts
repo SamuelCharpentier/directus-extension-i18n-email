@@ -183,10 +183,10 @@ export const EMAIL_TEMPLATES_COLLECTION: CollectionPayload = {
 				interface: 'translations',
 				special: ['translations'],
 				options: {
-					languageField: 'languages_code',
+					languageField: 'name',
 					languageDirectionField: 'direction',
-					template: '{{ languages_code.name }} ({{ languages_code.code }})',
 					defaultOpenSplitView: true,
+					userLanguage: true,
 				},
 				width: 'full',
 			},

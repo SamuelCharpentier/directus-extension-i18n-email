@@ -197,7 +197,7 @@ describe('runBootstrap', () => {
 				(u: any) => u.collection === 'email_templates' && u.field.field === 'translations',
 			);
 			expect(translationsUpdate).toBeTruthy();
-			expect(translationsUpdate.field.meta.options.template).toContain('languages_code.name');
+			expect(translationsUpdate.field.meta.options.languageField).toBe('name');
 		});
 
 		it('creates missing fields on existing collections', async () => {
