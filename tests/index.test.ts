@@ -254,4 +254,61 @@ describe('hook registration', () => {
 			expect.stringContaining('Post-update sync failed'),
 		);
 	});
+
+	it('server.start action invokes bootstrap', async () => {
+		const { handlers } = register({ EMAIL_TEMPLATES_PATH: dir });
+		// The eager kick-off already started a bootstrap; reset so we can
+		// observe a fresh run kicked by the server.start handler itself.
+		if (__INTERNAL__.inFlight) await __INTERNAL__.inFlight;
+		__INTERNAL__.reset();
+		expect(__INTERNAL__.ran).toBe(false);
+		handlers.actions['server.start']!();
+		// kickBootstrap is fire-and-forget — the in-flight promise must
+		// exist synchronously after the handler returns.
+		expect(__INTERNAL__.inFlight).not.toBeNull();
+		await __INTERNAL__.inFlight;
+		expect(__INTERNAL__.ran).toBe(true);
+	});
+
+	it('app.after init handler invokes bootstrap', async () => {
+		const { handlers } = register({ EMAIL_TEMPLATES_PATH: dir });
+		// Drain the eager kick-off, then reset so we can observe the
+		// app.after handler itself triggering a fresh runBootstrap.
+		if (__INTERNAL__.inFlight) await __INTERNAL__.inFlight;
+		__INTERNAL__.reset();
+		expect(__INTERNAL__.ran).toBe(false);
+		handlers.inits['app.after']!();
+		expect(__INTERNAL__.inFlight).not.toBeNull();
+		await __INTERNAL__.inFlight;
+		expect(__INTERNAL__.ran).toBe(true);
+	});
+
+	it('create action falls back to row.id and empty body when key/body missing', async () => {
+		// Exercises the falsy branches:
+		//   id:   key ? String(key) : row.id   (no `key` in meta)
+		//   body: row.body ?? ''                (no `body` on payload)
+		const { handlers } = register({ EMAIL_TEMPLATES_PATH: dir });
+		await handlers.actions['email_templates.items.create']!({
+			payload: { id: 'row-id-7', template_key: 'no-key-no-body' },
+		});
+		// File still flushes with the empty body fallback.
+		const out = await readFile(join(dir, 'no-key-no-body.liquid'), 'utf-8');
+		expect(out).toBe('');
+	});
+
+	it('update action handles meta without keys array (?? [] fallback)', async () => {
+		const { handlers, logger } = register({ EMAIL_TEMPLATES_PATH: dir });
+		// meta has no `keys` field → falls back to [] → early return.
+		await handlers.actions['email_templates.items.update']!({});
+		expect(logger.error).not.toHaveBeenCalled();
+	});
+
+	it('update action handles meta without payload object (?? {} fallback)', async () => {
+		const { handlers, services } = register({ EMAIL_TEMPLATES_PATH: dir });
+		services._stores.email_templates = [{ id: '1', template_key: 'p', body: 'pb' }];
+		// keys present, no payload → patch defaults to {} → Object.keys(patch).length === 0,
+		// so the body/template_key guard is skipped and readMany runs.
+		await handlers.actions['email_templates.items.update']!({ keys: ['1'] });
+		expect(await readFile(join(dir, 'p.liquid'), 'utf-8')).toBe('pb');
+	});
 });
