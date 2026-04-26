@@ -64,18 +64,21 @@ const updatedAtField: FieldPayload = {
 };
 
 // ─────────────────────────── languages ───────────────────────────
-// Single-field collection. The `code` field uses Directus's built-in
+// Two-field collection. The `code` field uses Directus's built-in
 // `system-language` interface — the same dropdown driving
 // `directus_settings.default_language` and `directus_users.language`.
-// Codes are BCP-47 (e.g. `en-US`, `fr-FR`); the interface renders the
-// human-readable language + region label automatically, so we don't
-// store a redundant `name` column.
+// Codes are BCP-47 (e.g. `en-US`, `fr-FR`).
+// `name` stores the human-readable label (e.g. `English (United States)`)
+// and is used by the translations interface as the tab label, since the
+// translations interface reads the raw column value rather than running
+// it through any field-level display formatter. Auto-populated via
+// `Intl.DisplayNames` on insert (see bootstrap + items.create filter).
 export const LANGUAGES_COLLECTION_PAYLOAD: CollectionPayload = {
 	collection: LANGUAGES_COLLECTION,
 	meta: {
 		icon: 'translate',
 		note: 'Languages available for email template translations. Picks from Directus\'s built-in language list.',
-		display_template: '{{ code }}',
+		display_template: '{{ name }}',
 		sort_field: 'code',
 	},
 	schema: { name: LANGUAGES_COLLECTION },
@@ -90,6 +93,17 @@ export const LANGUAGES_COLLECTION_PAYLOAD: CollectionPayload = {
 				width: 'full',
 			},
 			schema: { is_primary_key: true, is_nullable: false, has_auto_increment: false },
+		},
+		{
+			field: 'name',
+			type: 'string',
+			meta: {
+				interface: 'input',
+				width: 'full',
+				readonly: true,
+				note: 'Auto-populated from `code` via Intl.DisplayNames.',
+			},
+			schema: { is_nullable: true },
 		},
 	],
 };
@@ -168,7 +182,7 @@ export const EMAIL_TEMPLATES_COLLECTION: CollectionPayload = {
 				interface: 'translations',
 				special: ['translations'],
 				options: {
-					languageField: 'code',
+					languageField: 'name',
 					defaultOpenSplitView: false,
 					userLanguage: true,
 				},
@@ -233,7 +247,7 @@ export const EMAIL_TEMPLATE_TRANSLATIONS_COLLECTION: CollectionPayload = {
 				interface: 'select-dropdown-m2o',
 				special: ['m2o'],
 				display: 'related-values',
-				display_options: { template: '{{ code }}' },
+				display_options: { template: '{{ name }}' },
 				required: true,
 				width: 'half',
 				hidden: true,

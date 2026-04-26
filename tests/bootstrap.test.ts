@@ -202,9 +202,7 @@ describe('runBootstrap', () => {
 		// Still exactly the row we pre-seeded — no extras inserted.
 		expect(s._stores.languages?.length).toBe(1);
 		expect(logger.info).not.toHaveBeenCalledWith(expect.stringContaining('Seeded language'));
-		expect(logger.info).toHaveBeenCalledWith(
-			expect.stringContaining('already populated'),
-		);
+		expect(logger.info).toHaveBeenCalledWith(expect.stringContaining('already populated'));
 	});
 
 	it('seeds project default + en-US when default differs from en-US', async () => {
@@ -318,7 +316,7 @@ describe('runBootstrap', () => {
 				(u: any) => u.collection === 'email_templates' && u.field.field === 'translations',
 			);
 			expect(translationsUpdate).toBeTruthy();
-			expect(translationsUpdate.field.meta.options.languageField).toBe('code');
+			expect(translationsUpdate.field.meta.options.languageField).toBe('name');
 		});
 
 		it('creates missing fields on existing collections', async () => {

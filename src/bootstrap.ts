@@ -10,7 +10,7 @@ import {
 import { ALL_COLLECTIONS, ALL_RELATIONS } from './schema';
 import { SEED_TEMPLATES, SEED_TRANSLATIONS, SEED_VARIABLES } from './seeds';
 import { computeChecksum } from './integrity';
-import { fetchDefaultLang } from './directus';
+import { fetchDefaultLang, localizeLangCode } from './directus';
 import { readTemplateFromDisk, syncTemplateBody } from './sync';
 
 let bootstrapRan = false;
@@ -285,10 +285,16 @@ async function seedLanguages(
 		);
 		return defaultLang;
 	}
-	await items.createOne({ code: defaultLang });
+	await items.createOne({
+		code: defaultLang,
+		name: localizeLangCode(defaultLang, defaultLang),
+	});
 	logger.info(`[i18n-email] Seeded language ${defaultLang} (project default).`);
 	if (defaultLang !== 'en-US') {
-		await items.createOne({ code: 'en-US' });
+		await items.createOne({
+			code: 'en-US',
+			name: localizeLangCode('en-US', defaultLang),
+		});
 		logger.info('[i18n-email] Seeded language en-US (English suggested copy fallback).');
 	}
 	return defaultLang;

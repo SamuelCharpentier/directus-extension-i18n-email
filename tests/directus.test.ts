@@ -11,7 +11,19 @@ import {
 	fetchTemplateVariables,
 	fetchAdminEmails,
 	fetchRecipientUser,
+	localizeLangCode,
 } from '../src/directus';
+
+describe('localizeLangCode', () => {
+	it('returns the localized language name for a valid BCP-47 tag', () => {
+		// Using `en` as displayLocale gives a stable, ICU-guaranteed label.
+		expect(localizeLangCode('fr-FR', 'en')).toBe('French (France)');
+	});
+	it('falls back to the raw code when Intl.DisplayNames throws (malformed displayLocale)', () => {
+		// '!!' is not a structurally-valid BCP-47 tag → constructor throws.
+		expect(localizeLangCode('en-US', '!!')).toBe('en-US');
+	});
+});
 
 describe('fetchDefaultLang', () => {
 	it('returns full BCP-47 tag from settings (no region stripping)', async () => {

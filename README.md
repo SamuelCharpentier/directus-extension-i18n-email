@@ -9,11 +9,7 @@ Database-backed, multilingual transactional email for Directus. Translate system
 - **Admin alerting.** Any dispatch failure sends an `admin-error` email to every admin-role user.
 - **Safe by default.** Unknown template names pass through untouched, so existing raw Directus templates keep working.
 
-<br />
-
 ---
-
-<br />
 
 ## Install
 

@@ -2,9 +2,10 @@ import type { EmailOptions, HookConfig } from '@directus/types';
 import { runBootstrap } from './bootstrap';
 import { runSendFilter } from './send';
 import { syncTemplateBody } from './sync';
-import { TEMPLATES_COLLECTION, VARIABLES_COLLECTION } from './constants';
+import { LANGUAGES_COLLECTION, TEMPLATES_COLLECTION, VARIABLES_COLLECTION } from './constants';
 import { computeChecksum } from './integrity';
-import type { EmailTemplateRow, EmailTemplateVariableRow } from './types';
+import { fetchDefaultLang, localizeLangCode } from './directus';
+import type { EmailTemplateRow, EmailTemplateVariableRow, LanguageRow } from './types';
 
 function templatesPathFromEnv(env: Record<string, unknown>): string {
 	return typeof env['EMAIL_TEMPLATES_PATH'] === 'string'
@@ -108,6 +109,24 @@ const hook: HookConfig = ({ filter, action, init }, { services, logger, getSchem
 	filter(`${TEMPLATES_COLLECTION}.items.create`, async (payload: unknown) => {
 		const row = payload as Partial<EmailTemplateRow>;
 		row.checksum = computeChecksum({ body: row.body ?? '' });
+		return row;
+	});
+
+	// ──────────── Auto-fill languages.name from `code` ────────────
+	// The translations interface uses `name` as the tab label; we keep
+	// admins from having to supply it manually.
+	filter(`${LANGUAGES_COLLECTION}.items.create`, async (payload: unknown) => {
+		const row = payload as Partial<LanguageRow>;
+		if (!row.code || row.name) return row;
+		try {
+			const displayLocale = await fetchDefaultLang(services, await getSchema(), env);
+			row.name = localizeLangCode(row.code, displayLocale);
+		} catch (err) {
+			logger.warn(
+				`[i18n-email] Failed to localize language code ${row.code}: ${(err as Error).message}`,
+			);
+			row.name = row.code;
+		}
 		return row;
 	});
 

@@ -47,6 +47,7 @@ export type EmailTemplateVariableRow = {
 
 export type LanguageRow = {
 	code: string;
+	name?: string | null;
 };
 
 export type SeedTemplate = {

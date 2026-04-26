@@ -16,6 +16,23 @@ function normaliseLang(lang: unknown): string | null {
 	return typeof lang === 'string' && lang.length > 0 ? lang : null;
 }
 
+/**
+ * Localized human-readable name for a BCP-47 tag, e.g.
+ * `localizeLangCode('en-US', 'fr-FR') → "anglais (États-Unis)"`.
+ * Falls back to the raw code when `Intl.DisplayNames` rejects either
+ * argument (e.g. malformed locale). The default fallback mode ('code')
+ * guarantees a string return from `dn.of`, so no nullish coalesce is
+ * needed there.
+ */
+export function localizeLangCode(code: string, displayLocale: string): string {
+	try {
+		const dn = new Intl.DisplayNames([displayLocale], { type: 'language' });
+		return dn.of(code) as string;
+	} catch {
+		return code;
+	}
+}
+
 export async function fetchDefaultLang(
 	services: ExtensionsServices,
 	schema: SchemaOverview,

@@ -49,13 +49,16 @@ describe('schema', () => {
 		expect(ALL_COLLECTIONS).toContain(EMAIL_TEMPLATE_VARIABLES_COLLECTION);
 		expect(ALL_COLLECTIONS).toContain(EMAIL_TEMPLATE_SYNC_AUDIT_COLLECTION);
 	});
-	it('languages collection has only `code` with system-language interface + display', () => {
+	it('languages collection has `code` (system-language) + auto-populated `name`', () => {
 		const fields = LANGUAGES_COLLECTION_PAYLOAD.fields;
-		expect(fields.map((f) => f.field)).toEqual(['code']);
+		expect(fields.map((f) => f.field)).toEqual(['code', 'name']);
 		const codeField = fields[0]!;
 		expect((codeField.meta as any)?.interface).toBe('system-language');
 		expect((codeField.meta as any)?.display).toBe('system-language');
 		expect((codeField.schema as any)?.is_primary_key).toBe(true);
+		const nameField = fields[1]!;
+		expect((nameField.meta as any)?.readonly).toBe(true);
+		expect((nameField.schema as any)?.is_nullable).toBe(true);
 	});
 	it('defines body + translations alias on email_templates', () => {
 		const fields = EMAIL_TEMPLATES_COLLECTION.fields;
