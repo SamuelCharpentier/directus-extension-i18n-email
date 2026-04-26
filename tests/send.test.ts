@@ -280,4 +280,35 @@ describe('runSendFilter', () => {
 		await new Promise((r) => setTimeout(r, 0));
 		expect(s._mailSends.length).toBeGreaterThan(0);
 	});
+
+	it('falls back to effectiveLang for baseLang when no translation row exists', async () => {
+		// Template exists but has zero translation rows in any language.
+		// Validation passes (no required vars), so we proceed to line 89
+		// where `translation` is null → `baseLang` must fall through to
+		// `effectiveLang`. We assert that by giving `base` a translation
+		// only in the user's language (`fr`) and confirming `i18n.base.*`
+		// is populated from that row.
+		const s = buildServices({
+			withUser: true,
+			vars: [], // no required variables
+			translations: [
+				{
+					id: 'bfr',
+					email_templates_id: 'tb',
+					languages_code: 'fr',
+					subject: '',
+					from_name: null,
+					strings: { footer_note: 'au revoir' },
+				},
+			],
+		});
+		const input = mkInput();
+		await runSendFilter(input as any, deps(s));
+		// translation was null → subject untouched
+		expect(input.subject).toBe('orig');
+		// baseLang resolved via the fallback, so base strings still load
+		expect(input.template.data.i18n).toMatchObject({
+			base: { footer_note: 'au revoir' },
+		});
+	});
 });
