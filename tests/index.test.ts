@@ -109,9 +109,7 @@ describe('hook registration', () => {
 			code: 'fr-FR',
 		})) as any;
 		expect(out.code).toBe('fr-FR');
-		expect(typeof out.name).toBe('string');
-		expect(out.name.length).toBeGreaterThan(0);
-		expect(out.name).not.toBe('fr-FR');
+		expect(out.name).toBe('français (France)');
 	});
 
 	it('languages.items.create skips when code missing or name already set', async () => {
@@ -123,24 +121,6 @@ describe('hook registration', () => {
 			name: 'preset',
 		})) as any;
 		expect(b.name).toBe('preset');
-	});
-
-	it('languages.items.create falls back to code when getSchema throws', async () => {
-		const { handlers, logger } = register(
-			{},
-			{
-				getSchema: async () => {
-					throw new Error('boom');
-				},
-			},
-		);
-		const out = (await handlers.filters['languages.items.create']!({
-			code: 'fr-FR',
-		})) as any;
-		expect(out.name).toBe('fr-FR');
-		expect(logger.warn).toHaveBeenCalledWith(
-			expect.stringContaining('Failed to localize language code fr-FR'),
-		);
 	});
 
 	it('delete filter blocks protected template rows', async () => {

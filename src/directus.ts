@@ -17,16 +17,26 @@ function normaliseLang(lang: unknown): string | null {
 }
 
 /**
- * Localized human-readable name for a BCP-47 tag, e.g.
- * `localizeLangCode('en-US', 'fr-FR') → "anglais (États-Unis)"`.
- * Falls back to the raw code when `Intl.DisplayNames` rejects either
+ * Endonym for a BCP-47 tag — i.e. the language's name written in its
+ * own language, in the consistent "Language (Region)" form.
+ *   `localizeLangCode('fr-CA') → "français (Canada)"`
+ *   `localizeLangCode('en-US') → "English (United States)"`
+ *
+ * Uses `languageDisplay: 'standard'` so every region renders
+ * parenthesized (avoids the inconsistent dialect form, which mixes
+ * "American English" / "français canadien" / "français (France)").
+ *
+ * Falls back to the raw code when `Intl.DisplayNames` rejects the
  * argument (e.g. malformed locale). The default fallback mode ('code')
  * guarantees a string return from `dn.of`, so no nullish coalesce is
  * needed there.
  */
-export function localizeLangCode(code: string, displayLocale: string): string {
+export function localizeLangCode(code: string): string {
 	try {
-		const dn = new Intl.DisplayNames([displayLocale], { type: 'language' });
+		const dn = new Intl.DisplayNames([code], {
+			type: 'language',
+			languageDisplay: 'standard',
+		});
 		return dn.of(code) as string;
 	} catch {
 		return code;

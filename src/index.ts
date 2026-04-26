@@ -4,7 +4,7 @@ import { runSendFilter } from './send';
 import { syncTemplateBody } from './sync';
 import { LANGUAGES_COLLECTION, TEMPLATES_COLLECTION, VARIABLES_COLLECTION } from './constants';
 import { computeChecksum } from './integrity';
-import { fetchDefaultLang, localizeLangCode } from './directus';
+import { localizeLangCode } from './directus';
 import type { EmailTemplateRow, EmailTemplateVariableRow, LanguageRow } from './types';
 
 function templatesPathFromEnv(env: Record<string, unknown>): string {
@@ -118,15 +118,7 @@ const hook: HookConfig = ({ filter, action, init }, { services, logger, getSchem
 	filter(`${LANGUAGES_COLLECTION}.items.create`, async (payload: unknown) => {
 		const row = payload as Partial<LanguageRow>;
 		if (!row.code || row.name) return row;
-		try {
-			const displayLocale = await fetchDefaultLang(services, await getSchema(), env);
-			row.name = localizeLangCode(row.code, displayLocale);
-		} catch (err) {
-			logger.warn(
-				`[i18n-email] Failed to localize language code ${row.code}: ${(err as Error).message}`,
-			);
-			row.name = row.code;
-		}
+		row.name = localizeLangCode(row.code);
 		return row;
 	});
 

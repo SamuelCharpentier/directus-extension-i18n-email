@@ -287,13 +287,13 @@ async function seedLanguages(
 	}
 	await items.createOne({
 		code: defaultLang,
-		name: localizeLangCode(defaultLang, defaultLang),
+		name: localizeLangCode(defaultLang),
 	});
 	logger.info(`[i18n-email] Seeded language ${defaultLang} (project default).`);
 	if (defaultLang !== 'en-US') {
 		await items.createOne({
 			code: 'en-US',
-			name: localizeLangCode('en-US', defaultLang),
+			name: localizeLangCode('en-US'),
 		});
 		logger.info('[i18n-email] Seeded language en-US (English suggested copy fallback).');
 	}

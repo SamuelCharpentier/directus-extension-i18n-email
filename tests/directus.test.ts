@@ -15,13 +15,13 @@ import {
 } from '../src/directus';
 
 describe('localizeLangCode', () => {
-	it('returns the localized language name for a valid BCP-47 tag', () => {
-		// Using `en` as displayLocale gives a stable, ICU-guaranteed label.
-		expect(localizeLangCode('fr-FR', 'en')).toBe('French (France)');
+	it('returns the endonym (language name in its own language) in "Language (Region)" form', () => {
+		expect(localizeLangCode('fr-CA')).toBe('français (Canada)');
+		expect(localizeLangCode('en-US')).toBe('English (United States)');
 	});
-	it('falls back to the raw code when Intl.DisplayNames throws (malformed displayLocale)', () => {
+	it('falls back to the raw code when Intl.DisplayNames throws (malformed code)', () => {
 		// '!!' is not a structurally-valid BCP-47 tag → constructor throws.
-		expect(localizeLangCode('en-US', '!!')).toBe('en-US');
+		expect(localizeLangCode('!!')).toBe('!!');
 	});
 });
 
