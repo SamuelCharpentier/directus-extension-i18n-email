@@ -311,4 +311,68 @@ describe('runSendFilter', () => {
 			base: { footer_note: 'au revoir' },
 		});
 	});
+
+	it('pre-renders Liquid tokens inside translation strings, subject, and from_name', async () => {
+		// Translator put `{{ user.first_name }}` directly inside the
+		// translated value because word order varies by language. The
+		// pre-render pass should resolve it before Directus's body render
+		// outputs `{{ i18n.heading }}` verbatim.
+		const s = buildServices({
+			withUser: true,
+			vars: [],
+			translations: [
+				{
+					id: 'pfr',
+					email_templates_id: 'tp',
+					languages_code: 'fr',
+					subject: 'Bonjour {{ user.first_name }}',
+					from_name: 'Org de {{ user.first_name }}',
+					strings: {
+						heading: 'Salut {{ user.first_name }}',
+						body: 'Lien : {{ url }}',
+					},
+				},
+				{
+					id: 'bfr',
+					email_templates_id: 'tb',
+					languages_code: 'fr',
+					subject: '',
+					from_name: null,
+					strings: { footer_note: 'À bientôt {{ user.first_name }}' },
+				},
+			],
+		});
+		const input = mkInput();
+		await runSendFilter(input as any, deps(s));
+		expect(input.subject).toBe('Bonjour Al');
+		expect((input as any).from).toEqual({ name: 'Org de Al', address: 'no-reply@x.co' });
+		expect(input.template.data.i18n).toEqual({
+			heading: 'Salut Al',
+			body: 'Lien : https://x',
+			base: { footer_note: 'À bientôt Al' },
+		});
+	});
+
+	it('warns and falls back to raw value when a translation has invalid Liquid', async () => {
+		const s = buildServices({
+			withUser: true,
+			vars: [],
+			translations: [
+				{
+					id: 'pfr',
+					email_templates_id: 'tp',
+					languages_code: 'fr',
+					subject: 'OK',
+					from_name: null,
+					strings: { heading: '{% bogus %}' },
+				},
+			],
+		});
+		const input = mkInput();
+		await runSendFilter(input as any, deps(s));
+		expect(input.template.data.i18n.heading).toBe('{% bogus %}');
+		expect(logger.warn).toHaveBeenCalledWith(
+			expect.stringContaining('Liquid render failed'),
+		);
+	});
 });

@@ -11,6 +11,8 @@ import { applyTranslationsToEmail, extractRecipientEmail } from './email';
 import { validateRequiredVariables } from './registry';
 import { notifyAdmins, isAdminErrorTemplate } from './admin-alert';
 import { BASE_LAYOUT_KEY, isSystemTemplateKey } from './constants';
+import { renderLiquidString, renderLiquidStrings } from './liquid';
+import type { EmailTemplateTranslationRow } from './types';
 
 export type SendFilterDeps = {
 	services: ExtensionsServices;
@@ -114,9 +116,56 @@ export async function runSendFilter(
 		const fallbackFromName = envFromName ?? projectName;
 		const fromEnv = typeof env['EMAIL_FROM'] === 'string' ? (env['EMAIL_FROM'] as string) : '';
 
+		// Pre-render Liquid in translated strings, subject, and from_name
+		// using the same context the body template will eventually see
+		// (minus `i18n` itself — translations can't reference themselves).
+		// This lets translators put `{{ user.first_name }}` directly inside
+		// a translation value where word order varies by language.
+		const renderCtx: Record<string, unknown> = {
+			...data,
+			...(recipientUser ? { user: recipientUser } : {}),
+		};
+
+		const renderedStrings = translation
+			? await renderLiquidStrings(
+					translation.strings,
+					renderCtx,
+					logger,
+					`${templateName}.strings`,
+				)
+			: {};
+		const renderedBaseStrings = baseStrings
+			? await renderLiquidStrings(baseStrings, renderCtx, logger, 'base.strings')
+			: null;
+		const renderedSubject = translation?.subject
+			? await renderLiquidString(
+					translation.subject,
+					renderCtx,
+					logger,
+					`${templateName}.subject`,
+				)
+			: (translation?.subject ?? '');
+		const renderedFromName = translation?.from_name
+			? await renderLiquidString(
+					translation.from_name,
+					renderCtx,
+					logger,
+					`${templateName}.from_name`,
+				)
+			: (translation?.from_name ?? null);
+
+		const renderedTranslation: EmailTemplateTranslationRow | null = translation
+			? {
+					...translation,
+					subject: renderedSubject,
+					from_name: renderedFromName,
+					strings: renderedStrings,
+				}
+			: null;
+
 		applyTranslationsToEmail(input, {
-			translation,
-			baseStrings,
+			translation: renderedTranslation,
+			baseStrings: renderedBaseStrings,
 			fallbackFromName,
 			fromEnv,
 			recipientUser,
