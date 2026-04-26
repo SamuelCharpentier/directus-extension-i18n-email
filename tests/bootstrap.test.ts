@@ -183,6 +183,99 @@ describe('runBootstrap', () => {
 		expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('Bootstrap failed'));
 	});
 
+	it('skips re-seeding languages that already exist', async () => {
+		// Simulates a second boot: every seed language is already in the
+		// store, so seedLanguages must NOT call createOne for any of them.
+		const s = makeServices({
+			items: {
+				languages: {
+					rows: [
+						{ code: 'en', name: 'English', direction: 'ltr' },
+						{ code: 'fr', name: 'Français', direction: 'ltr' },
+					],
+				},
+			},
+		});
+		const logger = makeLogger();
+		await runBootstrap(dir, s as any, getSchema, logger);
+		// Still exactly the two we pre-seeded — no duplicates.
+		expect(s._stores.languages?.length).toBe(2);
+		expect(logger.info).not.toHaveBeenCalledWith(
+			expect.stringContaining('Seeded language'),
+		);
+	});
+
+	it('skips re-seeding variables that already exist', async () => {
+		// Pre-seed every SEED_VARIABLES row so the (template_key,
+		// variable_name) lookup hits an existing record and createOne
+		// is bypassed.
+		const s = makeServices({
+			items: {
+				email_template_variables: {
+					rows: [
+						{ template_key: 'password-reset', variable_name: 'url' },
+						{ template_key: 'user-invitation', variable_name: 'url' },
+						{ template_key: 'user-registration', variable_name: 'url' },
+						{ template_key: 'admin-error', variable_name: 'reason' },
+						{ template_key: 'admin-error', variable_name: 'context' },
+						{ template_key: 'admin-error', variable_name: 'timestamp' },
+					],
+				},
+			},
+		});
+		const logger = makeLogger();
+		await runBootstrap(dir, s as any, getSchema, logger);
+		// No new variable rows added.
+		expect(s._stores.email_template_variables?.length).toBe(6);
+		expect(logger.info).not.toHaveBeenCalledWith(
+			expect.stringContaining('Seeded variable'),
+		);
+	});
+
+	it('skips re-seeding translations that already exist', async () => {
+		// Pre-seed a template row with a known id, plus a translation
+		// row matching one of the SEED_TRANSLATIONS entries. seedTemplates
+		// will reuse the existing template (parent.id === 't-base'), and
+		// seedTranslations' (email_templates_id, languages_code) lookup
+		// must hit the existing row — exercising the skip-when-exists
+		// continue branch — instead of creating a duplicate.
+		const s = makeServices({
+			items: {
+				email_templates: {
+					rows: [{ id: 't-base', template_key: 'base' }],
+				},
+				email_template_translations: {
+					rows: [
+						{
+							id: 'tr-base-fr',
+							email_templates_id: 't-base',
+							languages_code: 'fr',
+							subject: '',
+							from_name: 'pre-seeded',
+							strings: { footer_note: 'pre-seeded' },
+						},
+					],
+				},
+			},
+		});
+		const logger = makeLogger();
+		await runBootstrap(dir, s as any, getSchema, logger);
+		// The existing 'base/fr' translation must be untouched (still 1 row
+		// with that pair) and no 'Seeded translation base/fr' info was logged.
+		const baseFrRows = s._stores.email_template_translations!.filter(
+			(r: any) => r.email_templates_id === 't-base' && r.languages_code === 'fr',
+		);
+		expect(baseFrRows.length).toBe(1);
+		expect(baseFrRows[0]!.from_name).toBe('pre-seeded');
+		expect(logger.info).not.toHaveBeenCalledWith(
+			expect.stringContaining('Seeded translation base/fr'),
+		);
+		// Other translations are still seeded normally.
+		expect(logger.info).toHaveBeenCalledWith(
+			expect.stringContaining('Seeded translation base/en'),
+		);
+	});
+
 	describe('field migration', () => {
 		it('upserts meta on existing fields without recreating them', async () => {
 			const s = makeServices({
