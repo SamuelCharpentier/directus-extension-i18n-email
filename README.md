@@ -15,13 +15,47 @@ Database-backed, multilingual transactional email for Directus. Translate system
 
 <br />
 
+## Table of Contents
+
+- [Install](#install)
+- [First Boot](#first-boot)
+- [How It Works](#how-it-works)
+- [Environment Variables](#environment-variables)
+- [Directory Layout](#directory-layout)
+- [Collections](#collections)
+- [Liquid Templates](#liquid-templates)
+- [Sending Custom Emails](#sending-custom-emails)
+- [Language Resolution](#language-resolution)
+- [Admin Error Notifications](#admin-error-notifications)
+- [Development](#development)
+- [Notes](#notes)
+- [Contributing](#contributing)
+
+---
+
 ## Install
+
+### Manual build and install
 
 ```sh
 npm ci && npm run build
 ```
 
-Copy the built extension into your Directus `extensions/` directory (or use `directus-extension link`), then restart Directus. See the [official installation guide](https://docs.directus.io/extensions/installing-extensions.html) for other options.
+Create a folder named `directus-extension-i18n-email` inside your Directus project's extensions folder (typically `<directus-project>/extensions`; see `EXTENSIONS_PATH` in your Directus environement variables) and copy both `dist/` and `package.json` into it. Directus reads the extension entry point from `package.json`'s `directus:extension` field, so both must be present alongside each other. Restart Directus afterwards.
+
+### Symlink (local development)
+
+Symlink this repo into it for local development:
+
+```sh
+npm run link -- "absolute/path/to/directus/extensions/folder"
+```
+
+`npm run link` wraps `directus-extension link <extensions-folder>` from `@directus/extensions-sdk`. It creates a symlink at `<extensions-folder>/directus-extension-i18n-email` pointing back at this repo, so changes to `dist/` are picked up without copying. Run `npm run build` (or keep `npm run dev` watching) so `dist/index.js` exists, then restart Directus.
+
+See the [official installation guide](https://docs.directus.io/extensions/installing-extensions.html) for other options.
+
+## First Boot
 
 On first start the extension will:
 
@@ -96,7 +130,7 @@ EMAIL_TEMPLATES_PATH/
 
 The `.liquid` files in this directory are managed by this extension — they are written from `email_templates.body` whenever a row is created or its body is updated. Translations (subject, from-name, i18n strings) live exclusively in the DB; there are no on-disk locale files.
 
-You can copy the files under [examples/templates/](examples/templates) into `EMAIL_TEMPLATES_PATH` *before* the first boot to use them as the seeded body for matching `template_key`s — bootstrap will pick them up in preference to the shipped defaults.
+You can copy the files under [examples/templates/](examples/templates) into `EMAIL_TEMPLATES_PATH` _before_ the first boot to use them as the seeded body for matching `template_key`s — bootstrap will pick them up in preference to the shipped defaults.
 
 <br />
 
@@ -138,40 +172,40 @@ One row per template (language-agnostic).
 
 One row per `(email_templates_id, languages_code)` pair, edited through the parent's translations interface.
 
-| Field                | Type    | Notes                                                                                                |
-| -------------------- | ------- | ---------------------------------------------------------------------------------------------------- |
-| `id`                 | uuid    | PK                                                                                                   |
-| `email_templates_id` | uuid    | FK → `email_templates.id` (cascade delete)                                                           |
-| `languages_code`     | string  | FK → `languages.code` (cascade delete)                                                               |
-| `subject`            | string? | Email subject. Empty for the `base` layout. Liquid-rendered before send.                             |
-| `from_name`          | string? | Sender display-name override for this language. Liquid-rendered before send.                         |
-| `strings`            | json    | Flat key → string map exposed to Liquid as `i18n.*`. Each value is Liquid-rendered before send.      |
+| Field                | Type    | Notes                                                                                           |
+| -------------------- | ------- | ----------------------------------------------------------------------------------------------- |
+| `id`                 | uuid    | PK                                                                                              |
+| `email_templates_id` | uuid    | FK → `email_templates.id` (cascade delete)                                                      |
+| `languages_code`     | string  | FK → `languages.code` (cascade delete)                                                          |
+| `subject`            | string? | Email subject. Empty for the `base` layout. Liquid-rendered before send.                        |
+| `from_name`          | string? | Sender display-name override for this language. Liquid-rendered before send.                    |
+| `strings`            | json    | Flat key → string map exposed to Liquid as `i18n.*`. Each value is Liquid-rendered before send. |
 
 ### `email_template_variables`
 
 Declare what each template needs. If a variable is `is_required` and missing from `template.data` at send time, the dispatch aborts and admins are notified.
 
-| Field           | Type    | Notes                                                  |
-| --------------- | ------- | ------------------------------------------------------ |
-| `id`            | uuid    | PK                                                     |
-| `template_key`  | string  | Matches `email_templates.template_key` by convention   |
-| `variable_name` | string  | e.g. `url`, `projectName`                              |
-| `is_required`   | boolean | Aborts send when missing                               |
-| `is_protected`  | boolean | Auto-set for entries belonging to protected templates  |
-| `description`   | text?   | Admin-facing                                           |
-| `example_value` | string? | Shown in docs / preview                                |
+| Field           | Type    | Notes                                                 |
+| --------------- | ------- | ----------------------------------------------------- |
+| `id`            | uuid    | PK                                                    |
+| `template_key`  | string  | Matches `email_templates.template_key` by convention  |
+| `variable_name` | string  | e.g. `url`, `projectName`                             |
+| `is_required`   | boolean | Aborts send when missing                              |
+| `is_protected`  | boolean | Auto-set for entries belonging to protected templates |
+| `description`   | text?   | Admin-facing                                          |
+| `example_value` | string? | Shown in docs / preview                               |
 
 ### `email_template_sync_audit`
 
 Append-only log of body filesystem syncs. Written by the extension; readable by admins for debugging.
 
-| Field          | Type    | Notes                                              |
-| -------------- | ------- | -------------------------------------------------- |
-| `id`           | uuid    | PK                                                 |
-| `template_key` | string  | Which template the row covers                      |
-| `reason`       | string? | `bootstrap`, `body-create`, `body-update`, …       |
-| `action`       | string? | `body-write`, …                                    |
-| `created_at`   | ts      | Auto                                               |
+| Field          | Type    | Notes                                        |
+| -------------- | ------- | -------------------------------------------- |
+| `id`           | uuid    | PK                                           |
+| `template_key` | string  | Which template the row covers                |
+| `reason`       | string? | `bootstrap`, `body-create`, `body-update`, … |
+| `action`       | string? | `body-write`, …                              |
+| `created_at`   | ts      | Auto                                         |
 
 <br />
 
@@ -290,6 +324,7 @@ npm run verify      # typecheck + lint
 npm test            # verify + vitest (with 100% coverage gate)
 npm run build       # test + directus-extension build
 npm run dev         # watch build (no verify/test gate)
+npm run link -- <extensions-folder>   # symlink this repo into a Directus project's extensions folder
 ```
 
 Coverage thresholds are set to 100% on statements, branches, functions, and lines.
