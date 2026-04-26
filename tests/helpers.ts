@@ -66,11 +66,9 @@ const matchFilter = (row: any, filter: any): boolean => {
 			const s = spec as Record<string, unknown>;
 			if ('_eq' in s) {
 				if (row[key] !== s['_eq']) return false;
-			} else if ('_nnull' in s) {
-				if (row[key] === null || row[key] === undefined) return false;
 			} else {
-				// nested relational-filter — treat shallowly, match by key
-				if (!matchFilter(row[key] ?? {}, s)) return false;
+				// nested relational-filter — recurse on the sub-object.
+				if (!matchFilter(row[key], s)) return false;
 			}
 		}
 	}

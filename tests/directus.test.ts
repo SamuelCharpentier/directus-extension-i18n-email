@@ -191,16 +191,20 @@ describe('fetchTemplateVariables', () => {
 });
 
 describe('fetchAdminEmails', () => {
-	it('returns emails of admins', async () => {
+	it('returns emails of active admins, dropping non-admins and null emails', async () => {
+		// No readByQuery override here — exercises the mock filter engine
+		// end-to-end, including the nested role.admin_access._eq path that
+		// excludes non-admin rows.
 		const s = makeServices({
 			items: {
 				directus_users: {
 					rows: [
 						{ email: 'a@x.co', status: 'active', role: { admin_access: true } },
 						{ email: 'b@x.co', status: 'active', role: { admin_access: false } },
+						{ email: 'c@x.co', status: 'inactive', role: { admin_access: true } },
 						{ email: null, status: 'active', role: { admin_access: true } },
+						{ email: '', status: 'active', role: { admin_access: true } },
 					],
-					readByQuery: async () => [{ email: 'a@x.co' }, { email: null }, { email: '' }],
 				},
 			},
 		});

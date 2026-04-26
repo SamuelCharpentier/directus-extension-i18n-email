@@ -155,12 +155,13 @@ export async function fetchAdminEmails(
 	const results = await users.readByQuery({
 		filter: {
 			status: { _eq: 'active' },
-			email: { _nnull: true },
 			role: { admin_access: { _eq: true } },
 		},
 		fields: ['email'],
 		limit: -1,
 	});
+	// Post-filter: drop rows whose email is null/empty/non-string. Cheaper
+	// than coupling the mock filter engine to `_nnull`.
 	return results
 		.map((u: Record<string, unknown>) => u['email'])
 		.filter((e): e is string => typeof e === 'string' && e.length > 0);
