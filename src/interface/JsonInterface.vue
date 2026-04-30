@@ -20,6 +20,61 @@ const emit = defineEmits<{
 	(e: 'input', value: StringMap | null): void;
 }>();
 
+const LOG_TAG = (): string =>
+	`[i18n-email/json:${props.variant === 'unused' ? 'unused_i18n_variables' : 'i18n_variables'}]`;
+
+/**
+ * Describe a value for the console without spreading it. Reports
+ * type, constructor, length-or-keys, and a short preview. Mirrors
+ * the helper in TranslationsInterface so log output is uniform.
+ */
+function describe(v: unknown): Record<string, unknown> {
+	const t = typeof v;
+	const out: Record<string, unknown> = { typeof: t };
+	if (v === null) {
+		out.isNull = true;
+		return out;
+	}
+	if (v === undefined) {
+		out.isUndefined = true;
+		return out;
+	}
+	if (t === 'string') {
+		const s = v as string;
+		out.length = s.length;
+		out.preview = s.length > 80 ? `${s.slice(0, 80)}…` : s;
+		out.startsWithBrace = s.trimStart().startsWith('{');
+		return out;
+	}
+	if (t === 'object') {
+		out.isArray = Array.isArray(v);
+		out.ctor = (v as object).constructor?.name ?? '<none>';
+		out.isBoxedString = v instanceof String;
+		try {
+			const keys = Object.keys(v as object);
+			out.keyCount = keys.length;
+			out.firstKeys = keys.slice(0, 8);
+			let charSoup = keys.length > 1;
+			for (let i = 0; i < Math.min(keys.length, 10); i++) {
+				if (keys[i] !== String(i)) {
+					charSoup = false;
+					break;
+				}
+				const val = (v as Record<string, unknown>)[keys[i]!];
+				if (typeof val !== 'string' || val.length !== 1) {
+					charSoup = false;
+					break;
+				}
+			}
+			out.looksLikeCharacterSoup = charSoup;
+		} catch (err) {
+			out.keysError = (err as Error).message;
+		}
+		return out;
+	}
+	return out;
+}
+
 /** Coerce the incoming `value` (object, JSON string, null) into a plain map. */
 function coerce(v: StringMap | string | null | undefined): StringMap {
 	if (v === null || v === undefined) return {};
@@ -85,13 +140,30 @@ watch(
 	() => props.value,
 	(next) => {
 		const incoming = coerce(next);
+		// eslint-disable-next-line no-console
+		console.groupCollapsed(`${LOG_TAG()} props.value changed`);
+		// eslint-disable-next-line no-console
+		console.log('incoming raw shape =', describe(next));
+		// eslint-disable-next-line no-console
+		console.log('incoming raw value =', next);
+		// eslint-disable-next-line no-console
+		console.log('after coerce =', incoming);
+		// eslint-disable-next-line no-console
+		console.log('current local =', local.value);
 		// Avoid stomping in-progress edits if the form value matches our local state.
 		if (JSON.stringify(incoming) !== JSON.stringify(local.value)) {
+			// eslint-disable-next-line no-console
+			console.log('=> ACCEPTED, replacing local');
 			local.value = incoming;
 			jsonText.value = JSON.stringify(incoming, null, 2);
 			jsonError.value = null;
 			void nextTick(autogrowAll);
+		} else {
+			// eslint-disable-next-line no-console
+			console.log('=> IGNORED (matches local)');
 		}
+		// eslint-disable-next-line no-console
+		console.groupEnd();
 	},
 	{ deep: true },
 );
@@ -109,6 +181,8 @@ function commit(next: StringMap): void {
 	local.value = next;
 	jsonText.value = JSON.stringify(next, null, 2);
 	jsonError.value = null;
+	// eslint-disable-next-line no-console
+	console.log(`${LOG_TAG()} commit emit("input")`, next);
 	emit('input', next);
 }
 
@@ -118,6 +192,8 @@ function onValueInput(key: string, ev: Event): void {
 	local.value = next;
 	jsonText.value = JSON.stringify(next, null, 2);
 	jsonError.value = null;
+	// eslint-disable-next-line no-console
+	console.log(`${LOG_TAG()} onValueInput key="${key}" emit("input")`, next);
 	emit('input', next);
 	autogrow(target);
 }
@@ -139,6 +215,8 @@ function onJsonInput(ev: Event): void {
 	if (!trimmed) {
 		jsonError.value = null;
 		local.value = {};
+		// eslint-disable-next-line no-console
+		console.log(`${LOG_TAG()} onJsonInput EMPTY emit("input") {}`);
 		emit('input', {});
 		return;
 	}
@@ -159,6 +237,8 @@ function onJsonInput(ev: Event): void {
 		}
 		jsonError.value = null;
 		local.value = out;
+		// eslint-disable-next-line no-console
+		console.log(`${LOG_TAG()} onJsonInput parsed emit("input")`, out);
 		emit('input', out);
 	} catch (err) {
 		jsonError.value = err instanceof Error ? err.message : 'Invalid JSON.';
@@ -184,6 +264,8 @@ function setJsonTextareaRef(el: Element | null): void {
 }
 
 onMounted(() => {
+	// eslint-disable-next-line no-console
+	console.log(`${LOG_TAG()} mounted; initial props.value =`, describe(props.value));
 	if (typeof ResizeObserver !== 'undefined') {
 		resizeObserver = new ResizeObserver((entries) => {
 			for (const entry of entries) autogrow(entry.target as HTMLTextAreaElement);

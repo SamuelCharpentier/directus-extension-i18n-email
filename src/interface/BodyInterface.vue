@@ -28,16 +28,21 @@ const emit = defineEmits<{
 	(e: 'input', value: string | null): void;
 }>();
 
+const LOG = '[i18n-email/body]';
+
 function dispatchSnapshot(body: string | null): void {
 	if (typeof window === 'undefined') return;
-	window.dispatchEvent(
-		new CustomEvent('i18n-email:body-snapshot', {
-			detail: { body: typeof body === 'string' ? body : '' },
-		}),
-	);
+	const detail = { body: typeof body === 'string' ? body : '' };
+	// eslint-disable-next-line no-console
+	console.log(`${LOG} dispatch i18n-email:body-snapshot len=${detail.body.length}`);
+	window.dispatchEvent(new CustomEvent('i18n-email:body-snapshot', { detail }));
 }
 
 function onInput(next: string | null): void {
+	// eslint-disable-next-line no-console
+	console.log(
+		`${LOG} onInput typeof=${typeof next} len=${typeof next === 'string' ? next.length : '-'}`,
+	);
 	emit('input', next);
 	dispatchSnapshot(next);
 }
@@ -53,11 +58,10 @@ function resolvedLineNumber(): boolean {
 
 function onFocusOut(): void {
 	if (typeof window === 'undefined') return;
-	window.dispatchEvent(
-		new CustomEvent('i18n-email:body-blur', {
-			detail: { body: typeof props.value === 'string' ? props.value : '' },
-		}),
-	);
+	const body = typeof props.value === 'string' ? props.value : '';
+	// eslint-disable-next-line no-console
+	console.log(`${LOG} dispatch i18n-email:body-blur len=${body.length}`);
+	window.dispatchEvent(new CustomEvent('i18n-email:body-blur', { detail: { body } }));
 }
 </script>
 

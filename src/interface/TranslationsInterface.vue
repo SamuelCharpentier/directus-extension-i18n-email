@@ -91,6 +91,61 @@ const lastBody = ref<string>('');
 
 const noopWarn = { warn: (): void => {} };
 
+const LOG = '[i18n-email/translations]';
+
+/**
+ * Describe a value for the console without spreading it (which would
+ * defeat the purpose when investigating spread bugs). Reports type,
+ * constructor, length-or-keys, and a short preview.
+ */
+function describe(v: unknown): Record<string, unknown> {
+	const t = typeof v;
+	const out: Record<string, unknown> = { typeof: t };
+	if (v === null) {
+		out.isNull = true;
+		return out;
+	}
+	if (v === undefined) {
+		out.isUndefined = true;
+		return out;
+	}
+	if (t === 'string') {
+		const s = v as string;
+		out.length = s.length;
+		out.preview = s.length > 80 ? `${s.slice(0, 80)}…` : s;
+		out.startsWithBrace = s.trimStart().startsWith('{');
+		return out;
+	}
+	if (t === 'object') {
+		out.isArray = Array.isArray(v);
+		out.ctor = (v as object).constructor?.name ?? '<none>';
+		out.isBoxedString = v instanceof String;
+		try {
+			const keys = Object.keys(v as object);
+			out.keyCount = keys.length;
+			out.firstKeys = keys.slice(0, 8);
+			// Character-soup fingerprint: numeric keys 0..n-1 with single-char values.
+			let charSoup = keys.length > 1;
+			for (let i = 0; i < Math.min(keys.length, 10); i++) {
+				if (keys[i] !== String(i)) {
+					charSoup = false;
+					break;
+				}
+				const val = (v as Record<string, unknown>)[keys[i]!];
+				if (typeof val !== 'string' || val.length !== 1) {
+					charSoup = false;
+					break;
+				}
+			}
+			out.looksLikeCharacterSoup = charSoup;
+		} catch (err) {
+			out.keysError = (err as Error).message;
+		}
+		return out;
+	}
+	return out;
+}
+
 function parseMap(v: unknown): StringMap {
 	if (!v) return {};
 	if (typeof v === 'string') {
@@ -132,7 +187,14 @@ function reconcile(body: string): { next: unknown; changed: number } {
 	const raw = props.value;
 	let changed = 0;
 
+	// eslint-disable-next-line no-console
+	console.log(`${LOG} reconcile: extracted keys from body =`, Array.from(keys));
+	// eslint-disable-next-line no-console
+	console.log(`${LOG} reconcile: raw props.value shape =`, describe(raw));
+
 	if (Array.isArray(raw)) {
+		// eslint-disable-next-line no-console
+		console.log(`${LOG} reconcile: branch=ARRAY (${raw.length} rows)`);
 		// Fetched array: build a fresh edits object containing only
 		// rows whose i18n maps changed. Untouched rows stay implicit
 		// (Directus treats anything missing from `update[]` as "no
@@ -140,11 +202,29 @@ function reconcile(body: string): { next: unknown; changed: number } {
 		const update: Record<string, unknown>[] = [];
 		for (const row of raw as TranslationRow[]) {
 			if (row.id === undefined) continue;
-			const result = reconcileTranslationStrings(
-				parseMap(row.i18n_variables),
-				parseMap(row.unused_i18n_variables),
-				keys,
+			// eslint-disable-next-line no-console
+			console.groupCollapsed(
+				`${LOG} reconcile row id=${row.id} (${row.languages_code ?? '?'})`,
 			);
+			// eslint-disable-next-line no-console
+			console.log('  raw row.i18n_variables =', describe(row.i18n_variables));
+			// eslint-disable-next-line no-console
+			console.log('  raw row.unused_i18n_variables =', describe(row.unused_i18n_variables));
+			const parsedActive = parseMap(row.i18n_variables);
+			const parsedUnused = parseMap(row.unused_i18n_variables);
+			// eslint-disable-next-line no-console
+			console.log('  parseMap(i18n_variables) =', parsedActive);
+			// eslint-disable-next-line no-console
+			console.log('  parseMap(unused_i18n_variables) =', parsedUnused);
+			const result = reconcileTranslationStrings(parsedActive, parsedUnused, keys);
+			// eslint-disable-next-line no-console
+			console.log('  reconcile result.changed =', result.changed);
+			// eslint-disable-next-line no-console
+			console.log('  reconcile result.i18n_variables =', result.i18n_variables);
+			// eslint-disable-next-line no-console
+			console.log('  reconcile result.unused_i18n_variables =', result.unused_i18n_variables);
+			// eslint-disable-next-line no-console
+			console.groupEnd();
 			if (!result.changed) continue;
 			changed += 1;
 			update.push({
@@ -158,6 +238,10 @@ function reconcile(body: string): { next: unknown; changed: number } {
 	}
 
 	if (isEditsObject(raw)) {
+		// eslint-disable-next-line no-console
+		console.log(
+			`${LOG} reconcile: branch=EDITS_OBJECT (create=${Array.isArray(raw.create) ? raw.create.length : '?'}, update=${Array.isArray(raw.update) ? raw.update.length : '?'}, delete=${Array.isArray(raw.delete) ? raw.delete.length : '?'})`,
+		);
 		const next: RelationEdits = {
 			create: Array.isArray(raw.create) ? [...raw.create] : [],
 			update: Array.isArray(raw.update) ? [...raw.update] : [],
@@ -167,11 +251,27 @@ function reconcile(body: string): { next: unknown; changed: number } {
 		// Patch newly-created (unsaved) rows in place.
 		for (let i = 0; i < next.create.length; i++) {
 			const entry = next.create[i] as Record<string, unknown>;
-			const result = reconcileTranslationStrings(
-				parseMap(entry.i18n_variables),
-				parseMap(entry.unused_i18n_variables),
-				keys,
-			);
+			// eslint-disable-next-line no-console
+			console.groupCollapsed(`${LOG} reconcile create[${i}]`);
+			// eslint-disable-next-line no-console
+			console.log('  entry.i18n_variables =', describe(entry.i18n_variables));
+			// eslint-disable-next-line no-console
+			console.log('  entry.unused_i18n_variables =', describe(entry.unused_i18n_variables));
+			const parsedActive = parseMap(entry.i18n_variables);
+			const parsedUnused = parseMap(entry.unused_i18n_variables);
+			// eslint-disable-next-line no-console
+			console.log('  parseMap(i18n_variables) =', parsedActive);
+			// eslint-disable-next-line no-console
+			console.log('  parseMap(unused_i18n_variables) =', parsedUnused);
+			const result = reconcileTranslationStrings(parsedActive, parsedUnused, keys);
+			// eslint-disable-next-line no-console
+			console.log('  result.changed =', result.changed);
+			// eslint-disable-next-line no-console
+			console.log('  result.i18n_variables =', result.i18n_variables);
+			// eslint-disable-next-line no-console
+			console.log('  result.unused_i18n_variables =', result.unused_i18n_variables);
+			// eslint-disable-next-line no-console
+			console.groupEnd();
 			if (!result.changed) continue;
 			changed += 1;
 			next.create[i] = {
@@ -193,11 +293,27 @@ function reconcile(body: string): { next: unknown; changed: number } {
 		for (let i = 0; i < next.update.length; i++) {
 			const entry = next.update[i] as Record<string, unknown>;
 			if (entry.id === undefined) continue;
-			const result = reconcileTranslationStrings(
-				parseMap(entry.i18n_variables),
-				parseMap(entry.unused_i18n_variables),
-				keys,
-			);
+			// eslint-disable-next-line no-console
+			console.groupCollapsed(`${LOG} reconcile update[${i}] id=${entry.id}`);
+			// eslint-disable-next-line no-console
+			console.log('  entry.i18n_variables =', describe(entry.i18n_variables));
+			// eslint-disable-next-line no-console
+			console.log('  entry.unused_i18n_variables =', describe(entry.unused_i18n_variables));
+			const parsedActive = parseMap(entry.i18n_variables);
+			const parsedUnused = parseMap(entry.unused_i18n_variables);
+			// eslint-disable-next-line no-console
+			console.log('  parseMap(i18n_variables) =', parsedActive);
+			// eslint-disable-next-line no-console
+			console.log('  parseMap(unused_i18n_variables) =', parsedUnused);
+			const result = reconcileTranslationStrings(parsedActive, parsedUnused, keys);
+			// eslint-disable-next-line no-console
+			console.log('  result.changed =', result.changed);
+			// eslint-disable-next-line no-console
+			console.log('  result.i18n_variables =', result.i18n_variables);
+			// eslint-disable-next-line no-console
+			console.log('  result.unused_i18n_variables =', result.unused_i18n_variables);
+			// eslint-disable-next-line no-console
+			console.groupEnd();
 			if (!result.changed) continue;
 			changed += 1;
 			next.update[i] = {
@@ -210,13 +326,33 @@ function reconcile(body: string): { next: unknown; changed: number } {
 		return { next, changed };
 	}
 
+	// eslint-disable-next-line no-console
+	console.warn(`${LOG} reconcile: branch=UNKNOWN — bailing out`);
 	return { next: raw, changed: 0 };
 }
 
 function refreshNow(reason: 'manual' | 'blur'): void {
 	if (props.disabled) return;
 	refreshError.value = null;
+
+	// eslint-disable-next-line no-console
+	console.group(`${LOG} refreshNow (${reason})`);
+	// eslint-disable-next-line no-console
+	console.log('lastBody.length =', lastBody.value.length);
+	// eslint-disable-next-line no-console
+	console.log('lastBody.preview =', lastBody.value.slice(0, 120));
+
 	const { next, changed } = reconcile(lastBody.value);
+
+	// eslint-disable-next-line no-console
+	console.log('emit("input") with shape =', describe(next));
+	// eslint-disable-next-line no-console
+	console.log('emit("input") full value =', next);
+	// eslint-disable-next-line no-console
+	console.log('changed count =', changed);
+	// eslint-disable-next-line no-console
+	console.groupEnd();
+
 	emit('input', next);
 	if (reason === 'manual') {
 		lastSummary.value =
@@ -269,6 +405,10 @@ function onBodyBlur(ev: Event): void {
 	if (typeof detail?.body === 'string') {
 		lastBody.value = detail.body;
 	}
+	// eslint-disable-next-line no-console
+	console.log(
+		`${LOG} received body-blur; autoRefresh=${autoRefresh.value} disabled=${props.disabled}`,
+	);
 	if (!autoRefresh.value || props.disabled) return;
 	try {
 		refreshNow('blur');
@@ -278,6 +418,8 @@ function onBodyBlur(ev: Event): void {
 }
 
 onMounted(async () => {
+	// eslint-disable-next-line no-console
+	console.log(`${LOG} mounted; initial props.value shape =`, describe(props.value));
 	if (typeof window !== 'undefined') {
 		window.addEventListener('i18n-email:body-snapshot', onBodySnapshot);
 		window.addEventListener('i18n-email:body-blur', onBodyBlur);

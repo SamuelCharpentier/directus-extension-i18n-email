@@ -116,7 +116,11 @@ describe('reconcileTranslationStrings', () => {
 	it('is idempotent', () => {
 		const used = new Set(['a', 'b']);
 		const first = reconcileTranslationStrings({ a: 'A' }, { b: 'B' }, used);
-		const second = reconcileTranslationStrings(first.i18n_variables, first.unused_i18n_variables, used);
+		const second = reconcileTranslationStrings(
+			first.i18n_variables,
+			first.unused_i18n_variables,
+			used,
+		);
 		expect(second.i18n_variables).toEqual(first.i18n_variables);
 		expect(second.unused_i18n_variables).toEqual(first.unused_i18n_variables);
 		expect(second.changed).toBe(false);
@@ -161,6 +165,37 @@ describe('reconcileTranslationStrings', () => {
 		expect(r.i18n_variables).toEqual({ b: '' });
 		expect(r.unused_i18n_variables).toEqual({ a: '' });
 		expect(r.changed).toBe(true);
+	});
+
+	// Regression: ItemsService can return JSON columns as raw strings; the old
+	// `{...currentActive}` spread char-soup'd them into 0/1/2-keyed garbage and
+	// then demoted every char into `unused_i18n_variables`. coerceMap fixes it.
+	it('parses JSON-string inputs without char-spread corruption', () => {
+		const activeStr = '{"heading":"H","body":"","cta":"","expiry_notice":""}';
+		const r = reconcileTranslationStrings(
+			activeStr as unknown as Record<string, string>,
+			null,
+			new Set(['heading', 'body', 'cta', 'expiry_notice_message']),
+		);
+		expect(r.i18n_variables).toEqual({
+			heading: 'H',
+			body: '',
+			cta: '',
+			expiry_notice_message: '',
+		});
+		expect(r.unused_i18n_variables).toEqual({ expiry_notice: '' });
+		// No numeric/character-soup keys leaked into either map.
+		expect(Object.keys(r.unused_i18n_variables).every((k) => /^[a-z_]/i.test(k))).toBe(true);
+	});
+
+	it('treats malformed string inputs as empty maps', () => {
+		const r = reconcileTranslationStrings(
+			'not json' as unknown as Record<string, string>,
+			'[1,2,3]' as unknown as Record<string, string>,
+			new Set(['x']),
+		);
+		expect(r.i18n_variables).toEqual({ x: '' });
+		expect(r.unused_i18n_variables).toEqual({});
 	});
 });
 

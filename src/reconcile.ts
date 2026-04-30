@@ -31,33 +31,81 @@ export function reconcileTranslationStrings(
 	currentUnused: TranslationStrings | null | undefined,
 	usedKeys: ReadonlySet<string>,
 ): ReconcileResult {
-	const active: TranslationStrings = { ...(currentActive ?? {}) };
-	const unused: TranslationStrings = { ...(currentUnused ?? {}) };
+	// Directus's ItemsService can hand back JSON-typed columns either as a
+	// parsed object OR as a raw JSON string (driver- and version-dependent).
+	// `{...someString}` char-spreads it into `{0:"{",1:'"',...}`, which then
+	// gets demoted wholesale into `unused_i18n_variables` on the next pass —
+	// the source of every "character soup" report. Coerce defensively.
+	const active: TranslationStrings = coerceMap(currentActive);
+	const unused: TranslationStrings = coerceMap(currentUnused);
+
+	// Re-baseline the change check against the *coerced* originals so a
+	// string→object normalization doesn't get reported as a real change.
+	const baselineActive = active;
+	const baselineUnused = unused;
+	const workActive: TranslationStrings = { ...baselineActive };
+	const workUnused: TranslationStrings = { ...baselineUnused };
 
 	// Promote unused → active when the body references them again.
 	for (const key of usedKeys) {
-		if (!(key in active)) {
-			if (key in unused) {
-				active[key] = unused[key]!;
-				delete unused[key];
+		if (!(key in workActive)) {
+			if (key in workUnused) {
+				workActive[key] = workUnused[key]!;
+				delete workUnused[key];
 			} else {
-				active[key] = '';
+				workActive[key] = '';
 			}
 		}
 	}
 
 	// Demote active → unused when the body no longer references them.
-	for (const key of Object.keys(active)) {
+	for (const key of Object.keys(workActive)) {
 		if (!usedKeys.has(key)) {
-			unused[key] = active[key]!;
-			delete active[key];
+			workUnused[key] = workActive[key]!;
+			delete workActive[key];
 		}
 	}
 
 	const changed =
-		!shallowStringEqual(currentActive ?? {}, active) ||
-		!shallowStringEqual(currentUnused ?? {}, unused);
-	return { i18n_variables: active, unused_i18n_variables: unused, changed };
+		!shallowStringEqual(baselineActive, workActive) ||
+		!shallowStringEqual(baselineUnused, workUnused);
+	return {
+		i18n_variables: workActive,
+		unused_i18n_variables: workUnused,
+		changed,
+	};
+}
+
+/**
+ * Coerce a value that *should* be a `TranslationStrings` object but might
+ * arrive as a JSON-encoded string (depending on DB driver / Directus version).
+ * Returns a fresh, plain object with only string values. Anything else (array,
+ * boxed primitive, malformed) collapses to `{}`.
+ */
+function coerceMap(v: TranslationStrings | string | null | undefined): TranslationStrings {
+	if (v === null || v === undefined) return {};
+	if (typeof v === 'string') {
+		const trimmed = v.trim();
+		if (!trimmed) return {};
+		try {
+			const parsed: unknown = JSON.parse(trimmed);
+			if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+				return coerceMap(parsed as TranslationStrings);
+			}
+		} catch {
+			/* fall through */
+		}
+		return {};
+	}
+	if (typeof v !== 'object' || Array.isArray(v)) return {};
+	if (v instanceof String || v instanceof Number || v instanceof Boolean) return {};
+	const out: TranslationStrings = {};
+	for (const [k, val] of Object.entries(v)) {
+		if (typeof val === 'string') out[k] = val;
+		else if (val === null || val === undefined) out[k] = '';
+		else out[k] = String(val);
+	}
+	return out;
 }
 
 function shallowStringEqual(a: TranslationStrings, b: TranslationStrings): boolean {
