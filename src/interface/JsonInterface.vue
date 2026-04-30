@@ -249,7 +249,10 @@ function setJsonRef(section: Section, el: Element | null): void {
  * preserved); a referenced key absent from both gets seeded in
  * `in_template` with `''`.
  */
-function reclassify(current: I18nVariables, keys: ReadonlySet<string>): {
+function reclassify(
+	current: I18nVariables,
+	keys: ReadonlySet<string>,
+): {
 	next: I18nVariables;
 	changed: boolean;
 } {
@@ -398,10 +401,7 @@ onBeforeUnmount(() => {
 					<span>No unused variables.</span>
 				</div>
 				<div v-else class="rows">
-					<div
-						v-for="key in sortedUnusedKeys"
-						:key="`unused::${key}`"
-						class="row">
+					<div v-for="key in sortedUnusedKeys" :key="`unused::${key}`" class="row">
 						<div class="key-bar">
 							<code class="key-name">{{ key }}</code>
 							<span class="spacer" />

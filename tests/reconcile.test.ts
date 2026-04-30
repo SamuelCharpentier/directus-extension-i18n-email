@@ -56,6 +56,11 @@ describe('extractI18nKeys', () => {
 		expect([...out]).toEqual([]);
 	});
 
+	it('drops bare `{{ i18n.base }}` (no sub-key under base) on base template', () => {
+		const out = extractI18nKeys('{{ i18n.base }}', 'base', mkLogger());
+		expect([...out]).toEqual([]);
+	});
+
 	it('drops bare `i18n` reference (no sub-key)', () => {
 		const out = extractI18nKeys('{{ i18n }}', 'x', mkLogger());
 		expect([...out]).toEqual([]);
@@ -143,6 +148,31 @@ describe('coerceI18nVariables', () => {
 			unused: {},
 		});
 		expect(out.in_template).toEqual({ ok: 'A' });
+	});
+
+	it('parses inner string members as JSON-encoded flat maps', () => {
+		const out = coerceI18nVariables({
+			in_template: '{"a":"A","b":"B"}',
+			unused: '{"c":"C"}',
+		} as never);
+		expect(out.in_template).toEqual({ a: 'A', b: 'B' });
+		expect(out.unused).toEqual({ c: 'C' });
+	});
+
+	it('treats blank inner string members as empty maps', () => {
+		const out = coerceI18nVariables({
+			in_template: '   ',
+			unused: '',
+		} as never);
+		expect(out).toEqual({ in_template: {}, unused: {} });
+	});
+
+	it('treats invalid-JSON inner string members as empty maps', () => {
+		const out = coerceI18nVariables({
+			in_template: 'not json',
+			unused: '[1,2,3]',
+		} as never);
+		expect(out).toEqual({ in_template: {}, unused: {} });
 	});
 });
 

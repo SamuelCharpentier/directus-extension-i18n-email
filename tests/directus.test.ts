@@ -12,7 +12,26 @@ import {
 	fetchAdminEmails,
 	fetchRecipientUser,
 	localizeLangCode,
+	capitalizeFirst,
 } from '../src/directus';
+
+describe('capitalizeFirst', () => {
+	it('returns empty input untouched', () => {
+		expect(capitalizeFirst('')).toBe('');
+	});
+	it('upper-cases first letter without locale (default ASCII path)', () => {
+		expect(capitalizeFirst('paris')).toBe('Paris');
+	});
+	it('honors locale-aware casing (Turkish dotted I)', () => {
+		expect(capitalizeFirst('istanbul', 'tr')).toBe('İstanbul');
+	});
+	it('returns string unchanged when first character is already upper-case', () => {
+		expect(capitalizeFirst('English')).toBe('English');
+	});
+	it('returns string unchanged when first character has no case (digit)', () => {
+		expect(capitalizeFirst('1st')).toBe('1st');
+	});
+});
 
 describe('localizeLangCode', () => {
 	it('returns the endonym (language name in its own language) in "Language (Region)" form', () => {

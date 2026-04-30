@@ -651,6 +651,167 @@ describe('runBootstrap', () => {
 				false,
 			);
 		});
+
+		it('warns and bails when readByQuery for legacy fields throws', async () => {
+			// Throw only for the legacy-rename query so the rest of bootstrap proceeds.
+			const readByQuery = vi.fn(async (query?: any) => {
+				const fieldFilter = query?.filter?.field;
+				if (fieldFilter && '_in' in fieldFilter) {
+					throw new Error('boom-readByQuery');
+				}
+				return [];
+			});
+			const s = makeServices({
+				items: { directus_fields: { readByQuery } },
+			});
+			const logger = makeLogger();
+			const { database, alterTable } = makeDb();
+			await runBootstrap(dir, s as any, getSchema, {}, logger, database);
+			expect(alterTable).not.toHaveBeenCalled();
+			expect(logger.warn).toHaveBeenCalledWith(
+				expect.stringContaining(
+					'Could not query directus_fields for legacy column rename',
+				),
+			);
+		});
+
+		it('treats hasColumn throw as columnExists=true and still renames', async () => {
+			const s = makeServices({
+				items: {
+					directus_fields: {
+						rows: [
+							{
+								id: 'f-1',
+								collection: 'email_template_translations',
+								field: 'strings',
+							},
+						],
+					},
+				},
+			});
+			const logger = makeLogger();
+			const { database, alterTable } = makeDb();
+			(database.schema.hasColumn as any).mockImplementation(async () => {
+				throw new Error('hasColumn-boom');
+			});
+			await runBootstrap(dir, s as any, getSchema, {}, logger, database);
+			expect(alterTable).toHaveBeenCalled();
+			// Legacy directus_fields row was deleted.
+			expect((s._stores.directus_fields ?? []).some((r: any) => r.field === 'strings')).toBe(
+				false,
+			);
+		});
+
+		it('renames even when database.schema.hasColumn is missing entirely', async () => {
+			const s = makeServices({
+				items: {
+					directus_fields: {
+						rows: [
+							{
+								id: 'f-1',
+								collection: 'email_template_translations',
+								field: 'strings',
+							},
+						],
+					},
+				},
+			});
+			const logger = makeLogger();
+			const { alterTable } = makeDb();
+			// Custom database surface without `hasColumn`.
+			const database = { schema: { alterTable } };
+			await runBootstrap(dir, s as any, getSchema, {}, logger, database);
+			expect(alterTable).toHaveBeenCalled();
+		});
+
+		it('warns and continues when alterTable throws', async () => {
+			const s = makeServices({
+				items: {
+					directus_fields: {
+						rows: [
+							{
+								id: 'f-1',
+								collection: 'email_template_translations',
+								field: 'strings',
+							},
+						],
+					},
+				},
+			});
+			const logger = makeLogger();
+			const { database } = makeDb();
+			(database.schema.alterTable as any).mockImplementation(async () => {
+				throw new Error('alter-boom');
+			});
+			await runBootstrap(dir, s as any, getSchema, {}, logger, database);
+			expect(logger.warn).toHaveBeenCalledWith(
+				expect.stringContaining('Column rename failed for strings'),
+			);
+		});
+
+		it('warns when fields.deleteOne throws but rename still happened', async () => {
+			const deleteOne = vi.fn(async () => {
+				throw new Error('delete-boom');
+			});
+			const s = makeServices({
+				items: {
+					directus_fields: {
+						rows: [
+							{
+								id: 'f-1',
+								collection: 'email_template_translations',
+								field: 'strings',
+							},
+						],
+						// readByQuery default works; only delete throws.
+					},
+				},
+			});
+			// Replace deleteOne on the directus_fields ItemsService instance.
+			// The helpers don't expose a deleteOne override, so monkey-patch
+			// via a custom ItemsService wrapper.
+			const origItemsService = s.ItemsService;
+			s.ItemsService = function (collection: string, opts: any) {
+				const inst = new origItemsService(collection, opts);
+				if (collection === 'directus_fields') {
+					inst.deleteOne = deleteOne;
+				}
+				return inst;
+			};
+			const logger = makeLogger();
+			const { database, alterTable } = makeDb();
+			await runBootstrap(dir, s as any, getSchema, {}, logger, database);
+			expect(alterTable).toHaveBeenCalled();
+			expect(deleteOne).toHaveBeenCalled();
+			expect(logger.warn).toHaveBeenCalledWith(
+				expect.stringContaining(
+					'Could not delete legacy directus_fields row for strings',
+				),
+			);
+		});
+
+		it('skips deleteOne when legacy field row has no id', async () => {
+			const s = makeServices({
+				items: {
+					directus_fields: {
+						rows: [
+							{
+								// No id at all.
+								collection: 'email_template_translations',
+								field: 'strings',
+							},
+						],
+					},
+				},
+			});
+			const logger = makeLogger();
+			const { database, alterTable } = makeDb();
+			await runBootstrap(dir, s as any, getSchema, {}, logger, database);
+			expect(alterTable).toHaveBeenCalled();
+			// No warn about deleteOne — it was skipped, not failed.
+			const warns = (logger.warn as any).mock.calls.flat().join('\n');
+			expect(warns).not.toContain('Could not delete legacy directus_fields row');
+		});
 	});
 
 	describe('language name capitalization backfill', () => {
@@ -688,6 +849,55 @@ describe('runBootstrap', () => {
 			const logger = makeLogger();
 			await runBootstrap(dir, s as any, getSchema, {}, logger);
 			expect(updateOne).not.toHaveBeenCalled();
+		});
+
+		it('warns and bails when reading languages throws', async () => {
+			// languages.readByQuery is called twice: once by seedLanguages,
+			// then by capitalizeLanguageNames. Let the first call resolve so
+			// seeding proceeds, then throw on the capitalization read.
+			let calls = 0;
+			const readByQuery = vi.fn(async () => {
+				calls += 1;
+				if (calls === 1) return [];
+				throw new Error('lang-read-boom');
+			});
+			const s = makeServices({
+				items: {
+					languages: { readByQuery },
+				},
+			});
+			const logger = makeLogger();
+			await runBootstrap(dir, s as any, getSchema, {}, logger);
+			expect(logger.warn).toHaveBeenCalledWith(
+				expect.stringContaining(
+					'Could not read languages for capitalization backfill',
+				),
+			);
+		});
+
+		it('warns per-row when updateOne throws but processes other rows', async () => {
+			const updateOne = vi.fn(async (id: string | number) => {
+				if (id === 'fr-FR') throw new Error('update-boom');
+				return id;
+			});
+			const s = makeServices({
+				items: {
+					languages: {
+						rows: [
+							{ id: 'fr-FR', code: 'fr-FR', name: 'français' },
+							{ id: 'de-DE', code: 'de-DE', name: 'deutsch' },
+						],
+						updateOne,
+					},
+				},
+			});
+			const logger = makeLogger();
+			await runBootstrap(dir, s as any, getSchema, {}, logger);
+			expect(updateOne).toHaveBeenCalledWith('fr-FR', { name: 'Français' });
+			expect(updateOne).toHaveBeenCalledWith('de-DE', { name: 'Deutsch' });
+			expect(logger.warn).toHaveBeenCalledWith(
+				expect.stringContaining('Could not update language fr-FR name'),
+			);
 		});
 	});
 });

@@ -304,6 +304,35 @@ describe('hook registration', () => {
 		expect(__INTERNAL__.ran).toBe(true);
 	});
 
+	it('swallows init() throw (older Directus versions without app.after)', async () => {
+		// Older Directus releases lack `init('app.after', ...)`. The hook
+		// must register everything else when init throws.
+		const filterFn = vi.fn();
+		const actionFn = vi.fn();
+		const initFn = vi.fn(() => {
+			throw new Error('no app.after');
+		});
+		const logger = makeLogger();
+		const services = makeServices();
+		const getSchema = async () => makeSchema();
+		expect(() =>
+			(hook as any)(
+				{
+					filter: filterFn,
+					action: actionFn,
+					init: initFn,
+					schedule: vi.fn(),
+					embed: vi.fn(),
+				},
+				{ services, logger, getSchema, env: { EMAIL_TEMPLATES_PATH: dir } },
+			),
+		).not.toThrow();
+		// init was attempted but threw → hook proceeded to register the rest.
+		expect(initFn).toHaveBeenCalledWith('app.after', expect.any(Function));
+		expect(actionFn).toHaveBeenCalledWith('server.start', expect.any(Function));
+		expect(filterFn).toHaveBeenCalledWith('email.send', expect.any(Function));
+	});
+
 	it('create action falls back to row.id and empty body when key/body missing', async () => {
 		// Exercises the falsy branches:
 		//   id:   key ? String(key) : row.id   (no `key` in meta)
