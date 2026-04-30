@@ -123,11 +123,7 @@ export async function reconcileTranslationsForTemplate(
 
 	let updated = 0;
 	for (const row of rows) {
-		const result = reconcileTranslationStrings(
-			row.strings,
-			row.unused_strings,
-			usedKeys,
-		);
+		const result = reconcileTranslationStrings(row.strings, row.unused_strings, usedKeys);
 		if (!result.changed) continue;
 		try {
 			await items.updateOne(row.id!, {

@@ -100,22 +100,14 @@ describe('reconcileTranslationStrings', () => {
 	});
 
 	it('moves orphan keys to unused, preserving values', () => {
-		const r = reconcileTranslationStrings(
-			{ a: 'A', orphan: 'O' },
-			{},
-			new Set(['a']),
-		);
+		const r = reconcileTranslationStrings({ a: 'A', orphan: 'O' }, {}, new Set(['a']));
 		expect(r.strings).toEqual({ a: 'A' });
 		expect(r.unused_strings).toEqual({ orphan: 'O' });
 		expect(r.changed).toBe(true);
 	});
 
 	it('promotes unused keys back to active when re-referenced', () => {
-		const r = reconcileTranslationStrings(
-			{ a: 'A' },
-			{ b: 'B-prev' },
-			new Set(['a', 'b']),
-		);
+		const r = reconcileTranslationStrings({ a: 'A' }, { b: 'B-prev' }, new Set(['a', 'b']));
 		expect(r.strings).toEqual({ a: 'A', b: 'B-prev' });
 		expect(r.unused_strings).toEqual({});
 		expect(r.changed).toBe(true);
@@ -157,11 +149,7 @@ describe('reconcileTranslationStrings', () => {
 		// Both have one key but value differs — first the helper drops `a`
 		// (orphan), then re-adds it as `b`. We exercise the value-equality
 		// branch directly:
-		const r = reconcileTranslationStrings(
-			{ a: 'old' },
-			{},
-			new Set(['a']),
-		);
+		const r = reconcileTranslationStrings({ a: 'old' }, {}, new Set(['a']));
 		expect(r.changed).toBe(false);
 	});
 
@@ -328,7 +316,12 @@ describe('fetchTemplateBodyById', () => {
 				},
 			},
 		});
-		const out = await fetchTemplateBodyById('tpl-1', services as any, makeSchema(), makeLogger());
+		const out = await fetchTemplateBodyById(
+			'tpl-1',
+			services as any,
+			makeSchema(),
+			makeLogger(),
+		);
 		expect(out).toEqual({ template_key: 'k', body: 'B' });
 	});
 
@@ -338,7 +331,12 @@ describe('fetchTemplateBodyById', () => {
 				email_templates: { rows: [{ id: 'tpl-1', template_key: 'k', body: null }] },
 			},
 		});
-		const out = await fetchTemplateBodyById('tpl-1', services as any, makeSchema(), makeLogger());
+		const out = await fetchTemplateBodyById(
+			'tpl-1',
+			services as any,
+			makeSchema(),
+			makeLogger(),
+		);
 		expect(out).toEqual({ template_key: 'k', body: '' });
 	});
 
@@ -346,7 +344,12 @@ describe('fetchTemplateBodyById', () => {
 		const services = makeServices({
 			items: { email_templates: { rows: [] } },
 		});
-		const out = await fetchTemplateBodyById('tpl-1', services as any, makeSchema(), makeLogger());
+		const out = await fetchTemplateBodyById(
+			'tpl-1',
+			services as any,
+			makeSchema(),
+			makeLogger(),
+		);
 		expect(out).toBeNull();
 	});
 

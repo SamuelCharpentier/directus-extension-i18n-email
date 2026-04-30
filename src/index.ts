@@ -157,9 +157,7 @@ const hook: HookConfig = ({ filter, action, init }, { services, logger, getSchem
 		const parentId = row.email_templates_id;
 		if (!parentId) return row;
 		const hasStrings =
-			row.strings &&
-			typeof row.strings === 'object' &&
-			Object.keys(row.strings).length > 0;
+			row.strings && typeof row.strings === 'object' && Object.keys(row.strings).length > 0;
 		if (hasStrings) {
 			if (!row.unused_strings) row.unused_strings = {};
 			return row;
@@ -171,9 +169,7 @@ const hook: HookConfig = ({ filter, action, init }, { services, logger, getSchem
 				row.strings = buildInitialStrings(tpl.body, tpl.template_key, logger);
 			}
 		} catch (err) {
-			logger.warn(
-				`[i18n-email] Translation pre-fill skipped: ${(err as Error).message}`,
-			);
+			logger.warn(`[i18n-email] Translation pre-fill skipped: ${(err as Error).message}`);
 		}
 		if (!row.strings) row.strings = {};
 		if (!row.unused_strings) row.unused_strings = {};

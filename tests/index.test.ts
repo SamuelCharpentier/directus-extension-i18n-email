@@ -337,7 +337,11 @@ describe('hook registration', () => {
 	it('translations create filter pre-fills strings from parent body', async () => {
 		const { handlers, services } = register({ EMAIL_TEMPLATES_PATH: dir });
 		services._stores.email_templates = [
-			{ id: 'tpl-1', template_key: 'password-reset', body: '{{ i18n.heading }} {{ i18n.body }}' },
+			{
+				id: 'tpl-1',
+				template_key: 'password-reset',
+				body: '{{ i18n.heading }} {{ i18n.body }}',
+			},
 		];
 		const out = (await handlers.filters['email_template_translations.items.create']!({
 			email_templates_id: 'tpl-1',
@@ -468,4 +472,3 @@ describe('hook registration', () => {
 		expect(t1.unused_strings).toEqual({ heading: 'H', orphan: 'O' });
 	});
 });
-

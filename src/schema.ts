@@ -77,7 +77,7 @@ export const LANGUAGES_COLLECTION_PAYLOAD: CollectionPayload = {
 	collection: LANGUAGES_COLLECTION,
 	meta: {
 		icon: 'translate',
-		note: 'Languages available for email template translations. Picks from Directus\'s built-in language list.',
+		note: "Languages available for email template translations. Picks from Directus's built-in language list.",
 		display_template: '{{ name }}',
 		sort_field: 'code',
 	},
@@ -296,6 +296,13 @@ export const EMAIL_TEMPLATE_TRANSLATIONS_COLLECTION: CollectionPayload = {
 				translations: [
 					{ language: 'en-US', translation: 'Unused Variables' },
 					{ language: 'fr-FR', translation: 'Variables inutilisées' },
+				],
+				conditions: [
+					{
+						name: 'hide-when-empty',
+						rule: { unused_strings: { _in: [null, '{}', ''] } },
+						hidden: true,
+					},
 				],
 				width: 'full',
 			},
