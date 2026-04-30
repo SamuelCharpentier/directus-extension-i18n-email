@@ -99,10 +99,42 @@ function broadcastFromBody(reason: 'manual' | 'blur'): void {
 	}
 }
 
-function onClickRefresh(): void {
+/**
+ * Pull a fresh body snapshot from `BodyInterface` before broadcasting.
+ * Avoids the first-load bug where `lastBody` is `''` (no prior input
+ * events) and the Refresh broadcast empties every language tab's
+ * `in_template`. Resolves on first matching `body-snapshot` or after
+ * a short timeout (in which case we proceed with whatever `lastBody`
+ * currently holds — preserves prior behavior if no `BodyInterface`
+ * is mounted, e.g. admin swapped the body field's interface).
+ */
+function awaitFreshBody(timeoutMs = 50): Promise<void> {
+	if (typeof window === 'undefined') return Promise.resolve();
+	return new Promise<void>((resolve) => {
+		let done = false;
+		const settle = (): void => {
+			if (done) return;
+			done = true;
+			window.removeEventListener('i18n-email:body-snapshot', listener);
+			clearTimeout(timer);
+			resolve();
+		};
+		const listener = (ev: Event): void => {
+			const detail = (ev as CustomEvent<{ body?: string }>).detail;
+			if (typeof detail?.body === 'string') lastBody.value = detail.body;
+			settle();
+		};
+		const timer = window.setTimeout(settle, timeoutMs);
+		window.addEventListener('i18n-email:body-snapshot', listener);
+		window.dispatchEvent(new CustomEvent('i18n-email:body-request'));
+	});
+}
+
+async function onClickRefresh(): Promise<void> {
 	if (refreshing.value) return;
 	refreshing.value = true;
 	try {
+		await awaitFreshBody();
 		broadcastFromBody('manual');
 	} catch (err) {
 		refreshError.value = err instanceof Error ? err.message : 'Refresh failed.';
