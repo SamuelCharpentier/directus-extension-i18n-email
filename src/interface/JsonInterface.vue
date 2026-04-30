@@ -224,14 +224,15 @@ function isWarn(key: string): boolean {
 	return v === undefined || v === null || v.trim() === '';
 }
 
-function setTextareaRef(section: Section, key: string, el: Element | null): void {
-	textareaRefs.value[`${section}::${key}`] = el as HTMLTextAreaElement | null;
-	observe(el as HTMLTextAreaElement | null);
-	autogrow(el as HTMLTextAreaElement | null);
+function setTextareaRef(section: Section, key: string, el: unknown): void {
+	const ref = (el as HTMLTextAreaElement | null) ?? null;
+	textareaRefs.value[`${section}::${key}`] = ref;
+	observe(ref);
+	autogrow(ref);
 }
 
-function setJsonRef(section: Section, el: Element | null): void {
-	const ref = el as HTMLTextAreaElement | null;
+function setJsonRef(section: Section, el: unknown): void {
+	const ref = (el as HTMLTextAreaElement | null) ?? null;
 	if (section === 'in_template') jsonInRef.value = ref;
 	else jsonUnusedRef.value = ref;
 	observe(ref);
@@ -379,7 +380,7 @@ onBeforeUnmount(() => {
 						</div>
 						<textarea
 							class="value-textarea"
-							:ref="(el) => setTextareaRef('in_template', key, el as Element | null)"
+							:ref="(el) => setTextareaRef('in_template', key, el)"
 							:value="local.in_template[key] ?? ''"
 							:disabled="disabled"
 							:placeholder="isWarn(key) ? 'Missing translation…' : ''"
@@ -417,7 +418,7 @@ onBeforeUnmount(() => {
 						</div>
 						<textarea
 							class="value-textarea"
-							:ref="(el) => setTextareaRef('unused', key, el as Element | null)"
+							:ref="(el) => setTextareaRef('unused', key, el)"
 							:value="local.unused[key] ?? ''"
 							:disabled="disabled"
 							rows="1"
@@ -435,7 +436,7 @@ onBeforeUnmount(() => {
 				</header>
 				<textarea
 					class="value-textarea json-area"
-					:ref="(el) => setJsonRef('in_template', el as Element | null)"
+					:ref="(el) => setJsonRef('in_template', el)"
 					:value="jsonTextIn"
 					:disabled="disabled"
 					placeholder="{}"
@@ -454,7 +455,7 @@ onBeforeUnmount(() => {
 				</header>
 				<textarea
 					class="value-textarea json-area"
-					:ref="(el) => setJsonRef('unused', el as Element | null)"
+					:ref="(el) => setJsonRef('unused', el)"
 					:value="jsonTextUnused"
 					:disabled="disabled"
 					placeholder="{}"

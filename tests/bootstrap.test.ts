@@ -669,9 +669,7 @@ describe('runBootstrap', () => {
 			await runBootstrap(dir, s as any, getSchema, {}, logger, database);
 			expect(alterTable).not.toHaveBeenCalled();
 			expect(logger.warn).toHaveBeenCalledWith(
-				expect.stringContaining(
-					'Could not query directus_fields for legacy column rename',
-				),
+				expect.stringContaining('Could not query directus_fields for legacy column rename'),
 			);
 		});
 
@@ -784,9 +782,7 @@ describe('runBootstrap', () => {
 			expect(alterTable).toHaveBeenCalled();
 			expect(deleteOne).toHaveBeenCalled();
 			expect(logger.warn).toHaveBeenCalledWith(
-				expect.stringContaining(
-					'Could not delete legacy directus_fields row for strings',
-				),
+				expect.stringContaining('Could not delete legacy directus_fields row for strings'),
 			);
 		});
 
@@ -869,9 +865,7 @@ describe('runBootstrap', () => {
 			const logger = makeLogger();
 			await runBootstrap(dir, s as any, getSchema, {}, logger);
 			expect(logger.warn).toHaveBeenCalledWith(
-				expect.stringContaining(
-					'Could not read languages for capitalization backfill',
-				),
+				expect.stringContaining('Could not read languages for capitalization backfill'),
 			);
 		});
 

@@ -186,10 +186,7 @@ describe('coerceI18nVariables', () => {
 
 describe('reconcileTranslationStrings', () => {
 	it('adds missing keys as empty', () => {
-		const r = reconcileTranslationStrings(
-			{ in_template: {}, unused: {} },
-			new Set(['a', 'b']),
-		);
+		const r = reconcileTranslationStrings({ in_template: {}, unused: {} }, new Set(['a', 'b']));
 		expect(r.value.in_template).toEqual({ a: '', b: '' });
 		expect(r.value.unused).toEqual({});
 		expect(r.changed).toBe(true);
@@ -271,10 +268,7 @@ describe('reconcileTranslationStrings', () => {
 	});
 
 	it('accepts legacy bare-key shape and treats it as in_template', () => {
-		const r = reconcileTranslationStrings(
-			{ a: 'A', orphan: 'O' } as never,
-			new Set(['a']),
-		);
+		const r = reconcileTranslationStrings({ a: 'A', orphan: 'O' } as never, new Set(['a']));
 		expect(r.value.in_template).toEqual({ a: 'A' });
 		expect(r.value.unused).toEqual({ orphan: 'O' });
 		expect(r.changed).toBe(true);
@@ -283,7 +277,8 @@ describe('reconcileTranslationStrings', () => {
 	// Regression: ItemsService can return JSON columns as raw strings; the old
 	// `{...currentValue}` spread char-soup'd them into 0/1/2-keyed garbage.
 	it('parses JSON-string inputs without char-spread corruption', () => {
-		const stored = '{"in_template":{"heading":"H","body":"","cta":"","expiry_notice":""},"unused":{}}';
+		const stored =
+			'{"in_template":{"heading":"H","body":"","cta":"","expiry_notice":""},"unused":{}}';
 		const r = reconcileTranslationStrings(
 			stored,
 			new Set(['heading', 'body', 'cta', 'expiry_notice_message']),
