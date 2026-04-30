@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, onMounted, ref, watch, type Ref } from 'vue';
+import { inject, onMounted, ref, watch, type Ref } from 'vue';
 import { useApi } from '@directus/extensions-sdk';
 import { extractI18nKeys } from '../liquid';
 import { reconcileTranslationStrings } from '../reconcile';
@@ -16,8 +16,10 @@ import { reconcileTranslationStrings } from '../reconcile';
  *     `email_extension_user_prefs`) runs the same reconciliation on
  *     focus-out of the body field.
  *
- * Both paths write to `values.translations` via `setFieldValue` —
- * UI-only, never persisted until the user hits Directus's Save.
+ * Both paths emit a `setFieldValue` event for the sibling
+ * `translations` field — Directus's `v-form` listens and updates its
+ * modelValue. This is UI-only, never persisted until the user hits
+ * Directus's Save button.
  */
 
 type StringMap = Record<string, string>;
@@ -44,12 +46,11 @@ const props = withDefaults(
 
 const emit = defineEmits<{
 	(e: 'input', value: string | null): void;
+	(e: 'setFieldValue', payload: { field: string; value: unknown }): void;
 }>();
 
 const api = useApi();
 const formValues = inject<Ref<Record<string, unknown>> | null>('values', null);
-type SetFieldValue = (field: string, value: unknown) => void;
-const setFieldValue = inject<SetFieldValue | null>('setFieldValue', null);
 
 const userId = ref<string | null>(null);
 const autoRefresh = ref(false);
@@ -58,8 +59,6 @@ const refreshError = ref<string | null>(null);
 const lastSummary = ref<string | null>(null);
 
 const noopWarn = { warn: (): void => {} };
-
-const canWrite = computed(() => typeof setFieldValue === 'function');
 
 function onInput(next: string | null): void {
 	emit('input', next);
@@ -97,15 +96,9 @@ function reconcileAll(body: string): { rows: TranslationRow[]; changed: number }
 function refreshNow(reason: 'manual' | 'blur'): void {
 	if (props.disabled) return;
 	refreshError.value = null;
-	if (!canWrite.value) {
-		if (reason === 'manual') {
-			refreshError.value = 'Cannot update translations from this scope.';
-		}
-		return;
-	}
 	const body = typeof props.value === 'string' ? props.value : '';
 	const { rows, changed } = reconcileAll(body);
-	setFieldValue!('translations', rows);
+	emit('setFieldValue', { field: 'translations', value: rows });
 	if (reason === 'manual') {
 		lastSummary.value =
 			changed === 0
@@ -184,12 +177,18 @@ onMounted(async () => {
 
 <template>
 	<div class="body-i18n-aware" @focusout="onFocusOut">
+		<interface-input-code
+			:value="value"
+			:disabled="disabled"
+			:language="(options.language as string) ?? 'htmlmixed'"
+			:line-number="options.lineNumber !== false"
+			@input="onInput" />
 		<div class="i18n-toolbar">
 			<v-button
 				small
 				secondary
 				:loading="refreshing"
-				:disabled="disabled || refreshing || !canWrite"
+				:disabled="disabled || refreshing"
 				v-tooltip="'Re-extract i18n.* keys from the body and reconcile every translation. UI only — does not save.'"
 				@click="onClickRefresh">
 				<v-icon name="refresh" left small />
@@ -211,12 +210,6 @@ onMounted(async () => {
 			<v-icon name="error" small />
 			<span>{{ refreshError }}</span>
 		</div>
-		<interface-input-code
-			:value="value"
-			:disabled="disabled"
-			:language="(options.language as string) ?? 'htmlmixed'"
-			:line-number="options.lineNumber !== false"
-			@input="onInput" />
 	</div>
 </template>
 
@@ -232,6 +225,7 @@ onMounted(async () => {
 	align-items: center;
 	gap: 12px;
 	flex-wrap: wrap;
+	margin-block-start: 4px;
 }
 
 .i18n-toolbar .spacer {
