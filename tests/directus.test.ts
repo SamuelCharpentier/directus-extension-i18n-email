@@ -206,13 +206,7 @@ describe('fetchTemplateWithTranslation', () => {
 				},
 			},
 		});
-		const r = await fetchTemplateWithTranslation(
-			'x',
-			'fr-FR',
-			'en-US',
-			s as any,
-			makeSchema(),
-		);
+		const r = await fetchTemplateWithTranslation('x', 'fr-FR', 'en-US', s as any, makeSchema());
 		expect(r?.translation?.id).toBe('full-en');
 	});
 	it('keeps placeholder when effective lang IS default lang (no fallback target)', async () => {
@@ -235,13 +229,7 @@ describe('fetchTemplateWithTranslation', () => {
 				},
 			},
 		});
-		const r = await fetchTemplateWithTranslation(
-			'x',
-			'en-US',
-			'en-US',
-			s as any,
-			makeSchema(),
-		);
+		const r = await fetchTemplateWithTranslation('x', 'en-US', 'en-US', s as any, makeSchema());
 		expect(r?.translation?.id).toBe('empty-en');
 	});
 });

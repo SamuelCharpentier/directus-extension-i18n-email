@@ -30,6 +30,11 @@ type TranslationRow = {
 	unused_i18n_variables?: StringMap | null;
 	[k: string]: unknown;
 };
+type RelationEdits = {
+	create: Record<string, unknown>[];
+	update: Record<string, unknown>[];
+	delete: (string | number)[];
+};
 
 const props = withDefaults(
 	defineProps<{
@@ -58,47 +63,135 @@ const refreshing = ref(false);
 const refreshError = ref<string | null>(null);
 const lastSummary = ref<string | null>(null);
 
+/**
+ * Snapshot of the persisted `translations` rows captured the first
+ * time we see them in their fetched (plain-array) shape. The
+ * translations m2m interface flips `values.translations` from an
+ * array to a `{create,update,delete}` edits object the moment any
+ * other field on a row changes — at which point we'd lose the
+ * original `i18n_variables` we need to reconcile against. This
+ * snapshot stays the source of truth for our reconciliation across
+ * the whole editing session.
+ */
+const fetchedSnapshot = ref<TranslationRow[] | null>(null);
+
 const noopWarn = { warn: (): void => {} };
 
 function onInput(next: string | null): void {
 	emit('input', next);
 }
 
-/**
- * Walk every translation row attached to this template form and
- * reconcile its i18n maps against the current body. Returns the
- * updated array plus the count of changed rows.
- */
-function reconcileAll(body: string): { rows: TranslationRow[]; changed: number } {
-	const keys = extractI18nKeys(body ?? '', 'body-interface-refresh', noopWarn);
-	const incoming = (formValues?.value?.translations as unknown) ?? [];
-	const arr: TranslationRow[] = Array.isArray(incoming)
-		? (incoming as TranslationRow[])
-		: [];
-	let changed = 0;
-	const out: TranslationRow[] = arr.map((row) => {
-		const result = reconcileTranslationStrings(
-			(row.i18n_variables as StringMap | null | undefined) ?? {},
-			(row.unused_i18n_variables as StringMap | null | undefined) ?? {},
-			keys,
-		);
-		if (!result.changed) return row;
-		changed += 1;
+function isEditsObject(v: unknown): v is RelationEdits {
+	return (
+		!!v &&
+		typeof v === 'object' &&
+		!Array.isArray(v) &&
+		'create' in (v as Record<string, unknown>) &&
+		'update' in (v as Record<string, unknown>) &&
+		'delete' in (v as Record<string, unknown>)
+	);
+}
+
+function getCurrentEdits(): RelationEdits {
+	const raw = formValues?.value?.translations as unknown;
+	if (isEditsObject(raw)) {
 		return {
+			create: Array.isArray(raw.create) ? [...raw.create] : [],
+			update: Array.isArray(raw.update) ? [...raw.update] : [],
+			delete: Array.isArray(raw.delete) ? [...raw.delete] : [],
+		};
+	}
+	return { create: [], update: [], delete: [] };
+}
+
+function captureSnapshotIfPossible(): void {
+	if (fetchedSnapshot.value !== null) return;
+	const raw = formValues?.value?.translations as unknown;
+	if (Array.isArray(raw)) {
+		// Deep-ish clone of the i18n maps so later in-place edits to
+		// formValues never mutate our snapshot.
+		fetchedSnapshot.value = (raw as TranslationRow[]).map((row) => ({
 			...row,
+			i18n_variables: row.i18n_variables ? { ...row.i18n_variables } : null,
+			unused_i18n_variables: row.unused_i18n_variables ? { ...row.unused_i18n_variables } : null,
+		}));
+	}
+}
+
+/**
+ * Reconcile every translation row's i18n maps against the current
+ * body and produce the m2m-edits payload that Directus's translations
+ * interface expects. Existing edits in `update[]` / `create[]` are
+ * preserved — we only patch the two i18n fields per row.
+ */
+function reconcileAll(body: string): { payload: RelationEdits; changed: number } {
+	captureSnapshotIfPossible();
+	const keys = extractI18nKeys(body ?? '', 'body-interface-refresh', noopWarn);
+	const edits = getCurrentEdits();
+	let changed = 0;
+
+	// Patch persisted rows (those that have an `id`) via update[].
+	const fetched = fetchedSnapshot.value ?? [];
+	for (const row of fetched) {
+		if (row.id === undefined) continue;
+		const existingUpdateIdx = edits.update.findIndex(
+			(u) => (u as Record<string, unknown>).id === row.id,
+		);
+		const existingUpdate =
+			existingUpdateIdx >= 0
+				? (edits.update[existingUpdateIdx] as Record<string, unknown>)
+				: null;
+		// The "current" maps for reconciliation should reflect any
+		// pending edits to those two specific fields, falling back to
+		// the snapshot when none exist.
+		const baseI18n =
+			(existingUpdate?.i18n_variables as StringMap | null | undefined) ??
+			row.i18n_variables ??
+			{};
+		const baseUnused =
+			(existingUpdate?.unused_i18n_variables as StringMap | null | undefined) ??
+			row.unused_i18n_variables ??
+			{};
+		const result = reconcileTranslationStrings(baseI18n, baseUnused, keys);
+		if (!result.changed) continue;
+		changed += 1;
+		const patched: Record<string, unknown> = {
+			...(existingUpdate ?? {}),
+			id: row.id,
 			i18n_variables: result.i18n_variables,
 			unused_i18n_variables: result.unused_i18n_variables,
 		};
-	});
-	return { rows: out, changed };
+		if (existingUpdateIdx >= 0) {
+			edits.update[existingUpdateIdx] = patched;
+		} else {
+			edits.update.push(patched);
+		}
+	}
+
+	// Patch newly-created (unsaved) rows in-place inside create[].
+	for (let i = 0; i < edits.create.length; i++) {
+		const entry = edits.create[i] as Record<string, unknown>;
+		const baseI18n = (entry.i18n_variables as StringMap | null | undefined) ?? {};
+		const baseUnused = (entry.unused_i18n_variables as StringMap | null | undefined) ?? {};
+		const result = reconcileTranslationStrings(baseI18n, baseUnused, keys);
+		if (!result.changed) continue;
+		changed += 1;
+		edits.create[i] = {
+			...entry,
+			i18n_variables: result.i18n_variables,
+			unused_i18n_variables: result.unused_i18n_variables,
+		};
+	}
+
+	return { payload: edits, changed };
 }
 
 function refreshNow(reason: 'manual' | 'blur'): void {
 	if (props.disabled) return;
 	refreshError.value = null;
 	const body = typeof props.value === 'string' ? props.value : '';
-	const { rows, changed } = reconcileAll(body);
-	emit('setFieldValue', { field: 'translations', value: rows });
+	const { payload, changed } = reconcileAll(body);
+	emit('setFieldValue', { field: 'translations', value: payload });
 	if (reason === 'manual') {
 		lastSummary.value =
 			changed === 0
@@ -158,6 +251,18 @@ watch(
 	},
 );
 
+// Capture the initial fetched translations array before the m2m
+// interface flips it into edit-object shape on the user's first
+// touch. `immediate: true` covers the case where translations are
+// already loaded by the time we mount.
+watch(
+	() => formValues?.value?.translations,
+	() => {
+		captureSnapshotIfPossible();
+	},
+	{ immediate: true, deep: false },
+);
+
 onMounted(async () => {
 	try {
 		const me = await api.get('/users/me', { params: { fields: 'id' } });
@@ -166,8 +271,7 @@ onMounted(async () => {
 			const pref = await api
 				.get(`/items/email_extension_user_prefs/${userId.value}`)
 				.catch(() => null);
-			autoRefresh.value =
-				pref?.data?.data?.auto_refresh_i18n_on_body_change === true;
+			autoRefresh.value = pref?.data?.data?.auto_refresh_i18n_on_body_change === true;
 		}
 	} catch {
 		// User store not reachable — auto-refresh stays off.
@@ -189,7 +293,9 @@ onMounted(async () => {
 				secondary
 				:loading="refreshing"
 				:disabled="disabled || refreshing"
-				v-tooltip="'Re-extract i18n.* keys from the body and reconcile every translation. UI only — does not save.'"
+				v-tooltip="
+					'Re-extract i18n.* keys from the body and reconcile every translation. UI only — does not save.'
+				"
 				@click="onClickRefresh">
 				<v-icon name="refresh" left small />
 				Refresh i18n variables from body
@@ -199,7 +305,10 @@ onMounted(async () => {
 					:model-value="autoRefresh"
 					:disabled="disabled"
 					@update:model-value="onToggleAutoRefresh" />
-				<span v-tooltip="'When on, every translation row is reconciled whenever the body loses focus.'">
+				<span
+					v-tooltip="
+						'When on, every translation row is reconciled whenever the body loses focus.'
+					">
 					Auto on body blur
 				</span>
 			</label>

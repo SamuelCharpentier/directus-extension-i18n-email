@@ -18,12 +18,7 @@ import {
 	EMAIL_TEMPLATE_SYNC_AUDIT_COLLECTION,
 	EMAIL_EXTENSION_USER_PREFS_COLLECTION,
 } from '../src/schema';
-import {
-	SEED_TEMPLATES,
-	SEED_TRANSLATIONS,
-	SEED_VARIABLES,
-	defaultBodyFor,
-} from '../src/seeds';
+import { SEED_TEMPLATES, SEED_TRANSLATIONS, SEED_VARIABLES, defaultBodyFor } from '../src/seeds';
 
 describe('constants', () => {
 	it('classifies system keys', () => {

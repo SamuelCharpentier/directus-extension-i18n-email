@@ -207,9 +207,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-	<div
-		class="i18n-strings-editor"
-		:class="[`variant-${variant}`, { 'is-empty': isEmpty }]">
+	<div class="i18n-strings-editor" :class="[`variant-${variant}`, { 'is-empty': isEmpty }]">
 		<div class="toolbar">
 			<span class="spacer" />
 			<v-button
@@ -374,10 +372,7 @@ onBeforeUnmount(() => {
 }
 
 .value-textarea:hover:not(:disabled) {
-	border-color: var(
-		--theme--form--field--input--border-color-hover,
-		var(--border-normal-alt)
-	);
+	border-color: var(--theme--form--field--input--border-color-hover, var(--border-normal-alt));
 }
 
 .value-textarea:focus {

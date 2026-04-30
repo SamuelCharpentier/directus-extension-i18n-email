@@ -647,9 +647,9 @@ describe('runBootstrap', () => {
 			await runBootstrap(dir, s as any, getSchema, {}, logger, database);
 			expect(alterTable).not.toHaveBeenCalled();
 			// Stale directus_fields row still gets cleaned up.
-			expect(
-				(s._stores.directus_fields ?? []).some((r: any) => r.field === 'strings'),
-			).toBe(false);
+			expect((s._stores.directus_fields ?? []).some((r: any) => r.field === 'strings')).toBe(
+				false,
+			);
 		});
 	});
 

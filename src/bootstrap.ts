@@ -85,12 +85,7 @@ async function migrateCollectionFields(
 		// real DB column. We never alter column types, so just warn the
 		// operator — they need to drop the stray column manually before
 		// queries against this collection will work.
-		if (
-			exists &&
-			field.type === 'alias' &&
-			current?.type &&
-			current.type !== 'alias'
-		) {
+		if (exists && field.type === 'alias' && current?.type && current.type !== 'alias') {
 			logger.warn(
 				`[i18n-email] Field ${payload.collection}.${field.field} is declared as alias but a real "${current.type}" column exists in the DB. Drop the column manually (e.g. via SQL) so this extension can register the o2m alias.`,
 			);
@@ -513,7 +508,11 @@ async function seedTranslations(
 	async function upsert(
 		templateKey: string,
 		languagesCode: string,
-		payload: { subject: string; from_name: string | null; i18n_variables: Record<string, string> },
+		payload: {
+			subject: string;
+			from_name: string | null;
+			i18n_variables: Record<string, string>;
+		},
 		label: string,
 	): Promise<void> {
 		const parent = byKey.get(templateKey);
@@ -554,7 +553,11 @@ async function seedTranslations(
 				await upsert(
 					tpl.template_key,
 					'en-US',
-					{ subject: seed.subject, from_name: seed.from_name, i18n_variables: seed.i18n_variables },
+					{
+						subject: seed.subject,
+						from_name: seed.from_name,
+						i18n_variables: seed.i18n_variables,
+					},
 					'English suggested copy',
 				);
 			}
