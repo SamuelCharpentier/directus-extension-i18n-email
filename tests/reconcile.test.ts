@@ -174,6 +174,14 @@ describe('coerceI18nVariables', () => {
 		} as never);
 		expect(out).toEqual({ in_template: {}, unused: {} });
 	});
+
+	it('treats non-object inner members (numbers, booleans) as empty maps', () => {
+		const out = coerceI18nVariables({
+			in_template: 42,
+			unused: true,
+		} as never);
+		expect(out).toEqual({ in_template: {}, unused: {} });
+	});
 });
 
 describe('reconcileTranslationStrings', () => {

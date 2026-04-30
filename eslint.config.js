@@ -48,7 +48,15 @@ export default tseslint.config(
 		languageOptions: {
 			parser: vueParser,
 			parserOptions: {
-				parser: tseslint.parser,
+				// Map every script-language flavor (including in-template
+				// expression syntax) at the TS parser so TypeScript-only
+				// constructs like `as Foo` cast assertions inside `:ref`
+				// inline arrow functions parse cleanly.
+				parser: {
+					js: tseslint.parser,
+					ts: tseslint.parser,
+					'<template>': tseslint.parser,
+				},
 				ecmaVersion: 2022,
 				sourceType: 'module',
 				extraFileExtensions: ['.vue'],
