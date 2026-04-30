@@ -186,13 +186,13 @@ One row per template (language-agnostic).
 
 One row per `(email_templates_id, languages_code)` pair, edited through the parent's translations interface.
 
-| Field                | Type    | Notes                                                                                           |
-| -------------------- | ------- | ----------------------------------------------------------------------------------------------- |
-| `id`                 | uuid    | PK                                                                                              |
-| `email_templates_id` | uuid    | FK → `email_templates.id` (cascade delete)                                                      |
-| `languages_code`     | string  | FK → `languages.code` (cascade delete)                                                          |
-| `subject`            | string? | Email subject. Empty for the `base` layout. Liquid-rendered before send.                                                                                                                                                          |
-| `from_name`          | string? | Sender display-name override for this language. Liquid-rendered before send.                                                                                                                                                      |
+| Field                | Type    | Notes                                                                                                                                                                                                                            |
+| -------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`                 | uuid    | PK                                                                                                                                                                                                                               |
+| `email_templates_id` | uuid    | FK → `email_templates.id` (cascade delete)                                                                                                                                                                                       |
+| `languages_code`     | string  | FK → `languages.code` (cascade delete)                                                                                                                                                                                           |
+| `subject`            | string? | Email subject. Empty for the `base` layout. Liquid-rendered before send.                                                                                                                                                         |
+| `from_name`          | string? | Sender display-name override for this language. Liquid-rendered before send.                                                                                                                                                     |
 | `i18n_variables`     | json    | `{ in_template: { [key]: string }, unused: { [key]: string } }`. `in_template` values are Liquid-rendered and exposed to the body as `{{ i18n.* }}`; `unused` values are kept in the DB for re-use but never sent to recipients. |
 
 ### `email_template_variables`
@@ -225,10 +225,10 @@ Append-only log of body filesystem syncs. Written by the extension; readable by 
 
 Per-user UI preferences for the editor interfaces. Hidden from the navigation sidebar; rows are created lazily by the translations interface the first time a user toggles a preference. PK is the user's uuid (no FK relation — the row outlives user deletions and is harmless if orphaned).
 
-| Field                                | Type    | Notes                                                                                                            |
-| ------------------------------------ | ------- | ---------------------------------------------------------------------------------------------------------------- |
-| `user`                               | uuid    | PK. Matches `directus_users.id`.                                                                                 |
-| `auto_refresh_i18n_on_body_change`   | boolean | When checked, the translations interface reconciles every language's `i18n_variables` on every body blur event. |
+| Field                              | Type    | Notes                                                                                                           |
+| ---------------------------------- | ------- | --------------------------------------------------------------------------------------------------------------- |
+| `user`                             | uuid    | PK. Matches `directus_users.id`.                                                                                |
+| `auto_refresh_i18n_on_body_change` | boolean | When checked, the translations interface reconciles every language's `i18n_variables` on every body blur event. |
 
 <br />
 
@@ -240,24 +240,24 @@ Per-user UI preferences for the editor interfaces. Hidden from the navigation si
 
 Templates are yours to design. Inside a template body you have access to:
 
-| Variable            | Source                                      | Description                                                   |
-| ------------------- | ------------------------------------------- | ------------------------------------------------------------- |
+| Variable            | Source                                                         | Description                                                   |
+| ------------------- | -------------------------------------------------------------- | ------------------------------------------------------------- |
 | `{{ i18n.* }}`      | The active translation row's `i18n_variables.in_template`      | Any key from the translation's JSON payload                   |
 | `{{ i18n.base.* }}` | The `base` template's translation `i18n_variables.in_template` | Shared layout strings (footer, org name, etc.)                |
-| `{{ url }}`         | Directus                                    | Action URL for system emails (reset link, invitation link, …) |
-| `{{ projectName }}` | Directus                                    | `directus_settings.project_name`                              |
-| `{{ user.* }}`      | Recipient lookup (system templates only)    | `id`, `first_name`, `last_name`, `email`, `language`          |
-| _other_             | Your caller                                 | Anything you passed in `template.data`                        |
+| `{{ url }}`         | Directus                                                       | Action URL for system emails (reset link, invitation link, …) |
+| `{{ projectName }}` | Directus                                                       | `directus_settings.project_name`                              |
+| `{{ user.* }}`      | Recipient lookup (system templates only)                       | `id`, `first_name`, `last_name`, `email`, `language`          |
+| _other_             | Your caller                                                    | Anything you passed in `template.data`                        |
 
 ### Liquid in translation fields
 
 Translation `subject`, `from_name`, and every value inside `i18n_variables.in_template` are themselves Liquid-rendered against the same data context the body sees (minus `i18n` itself — translations can't reference themselves). This applies equally to all three fields, so any of these work:
 
-| Field in `email_template_translations`  | Example value                   | Renders to      |
-| --------------------------------------- | ------------------------------- | --------------- |
-| `subject`                               | `Bonjour {{ user.first_name }}` | `Bonjour Marie` |
-| `from_name`                             | `{{ projectName }} Support`     | `Acme Support`  |
-| `i18n_variables.in_template.greeting`   | `Hello, {{ user.first_name }}!` | `Hello, John!`  |
+| Field in `email_template_translations` | Example value                   | Renders to      |
+| -------------------------------------- | ------------------------------- | --------------- |
+| `subject`                              | `Bonjour {{ user.first_name }}` | `Bonjour Marie` |
+| `from_name`                            | `{{ projectName }} Support`     | `Acme Support`  |
+| `i18n_variables.in_template.greeting`  | `Hello, {{ user.first_name }}!` | `Hello, John!`  |
 
 The rendered `subject` overrides the email's subject; the rendered `from_name` overrides the sender display-name; rendered `in_template` strings are exposed to the body as `{{ i18n.* }}`. Entries under `i18n_variables.unused` are not rendered and not sent — they're a holding area for keys removed from the body. If a value contains no Liquid tokens it's used as-is. If Liquid parsing fails for a value, the raw string is used and a warning is logged — a bad translation never aborts the send.
 
@@ -283,13 +283,13 @@ See [examples/templates/](examples/templates) for the full set, including [admin
 
 ## Editor Interfaces
 
-This extension is a Directus **bundle** that ships a hook *and* three Vue interfaces. The interfaces are wired to the schema by default during bootstrap so you don't need to pick them manually — but you can swap them out per-field in **Settings → Data Model** if you'd rather use the stock interfaces.
+This extension is a Directus **bundle** that ships a hook _and_ three Vue interfaces. The interfaces are wired to the schema by default during bootstrap so you don't need to pick them manually — but you can swap them out per-field in **Settings → Data Model** if you'd rather use the stock interfaces.
 
-| Interface ID                | Field it powers                                  | What it adds                                                                                                                                                                                                                          |
-| --------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `body-i18n-aware`           | `email_templates.body`                           | Drop-in replacement for `input-code`. Identical behaviour, plus dispatches a `i18n-email:body-blur` window event with the live body on focus-out so the variables editor can reconcile without leaving the form.                     |
-| `translations-i18n-aware`   | `email_templates.translations`                   | Drop-in wrapper around the standard `translations` interface. Adds a **Refresh i18n variables from body** button and an **Auto on body blur** checkbox above the split-view editor. The auto-refresh toggle persists per Directus user via `email_extension_user_prefs.auto_refresh_i18n_on_body_change`. |
-| `i18n-strings-editor`       | `email_template_translations.i18n_variables`     | Two-section editor (**In template** / **Unused**) with one auto-growing textarea per key, plus a **Form ⇄ JSON** view toggle. Reclassification between sections happens automatically when the translations interface broadcasts a refresh.                  |
+| Interface ID              | Field it powers                              | What it adds                                                                                                                                                                                                                                                                                              |
+| ------------------------- | -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `body-i18n-aware`         | `email_templates.body`                       | Drop-in replacement for `input-code`. Identical behaviour, plus dispatches a `i18n-email:body-blur` window event with the live body on focus-out so the variables editor can reconcile without leaving the form.                                                                                          |
+| `translations-i18n-aware` | `email_templates.translations`               | Drop-in wrapper around the standard `translations` interface. Adds a **Refresh i18n variables from body** button and an **Auto on body blur** checkbox above the split-view editor. The auto-refresh toggle persists per Directus user via `email_extension_user_prefs.auto_refresh_i18n_on_body_change`. |
+| `i18n-strings-editor`     | `email_template_translations.i18n_variables` | Two-section editor (**In template** / **Unused**) with one auto-growing textarea per key, plus a **Form ⇄ JSON** view toggle. Reclassification between sections happens automatically when the translations interface broadcasts a refresh.                                                               |
 
 ### How the interfaces talk to each other
 
@@ -312,8 +312,8 @@ The **Refresh** button does the same dance synchronously without needing a blur 
 The interfaces emit `console.log` traces gated by a localStorage flag. Toggle in DevTools and reload:
 
 ```js
-localStorage.setItem('i18n-email:debug', '1');   // enable
-localStorage.removeItem('i18n-email:debug');     // disable
+localStorage.setItem('i18n-email:debug', '1'); // enable
+localStorage.removeItem('i18n-email:debug'); // disable
 ```
 
 `console.warn` and `console.error` are always on regardless of the flag.

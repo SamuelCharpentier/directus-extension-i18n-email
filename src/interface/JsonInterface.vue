@@ -9,7 +9,7 @@ type Section = 'in_template' | 'unused';
 
 const props = withDefaults(
 	defineProps<{
-		value: I18nVariables | StringMap | string | null | undefined;
+		value?: I18nVariables | StringMap | string | null | undefined;
 		disabled?: boolean;
 	}>(),
 	{

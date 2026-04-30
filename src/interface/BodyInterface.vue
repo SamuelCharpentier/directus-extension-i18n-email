@@ -15,7 +15,7 @@ import { dlog } from './debug';
 
 const props = withDefaults(
 	defineProps<{
-		value: string | null | undefined;
+		value?: string | null | undefined;
 		disabled?: boolean;
 		options?: Record<string, unknown>;
 	}>(),
