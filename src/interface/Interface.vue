@@ -1,5 +1,8 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue';
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue';
+import { useApi } from '@directus/extensions-sdk';
+import { extractI18nKeys } from '../liquid';
+import { reconcileTranslationStrings } from '../reconcile';
 
 type StringMap = Record<string, string>;
 
@@ -161,6 +164,108 @@ function setJsonTextareaRef(el: Element | null): void {
 	jsonTextareaRef.value = el as HTMLTextAreaElement | null;
 	autogrow(el as HTMLTextAreaElement | null);
 }
+
+// ─────────────────── live refresh from body ───────────────────
+// Only the active-variant editor offers "Refresh from body". The
+// refresh stays UI-only (form-state) and never persists until the
+// user hits Directus's native Save.
+const api = useApi();
+const formValues = inject<Ref<Record<string, unknown>> | null>('values', null);
+type SetFieldValue = (field: string, value: unknown) => void;
+const setFieldValue = inject<SetFieldValue | null>('setFieldValue', null);
+
+const userId = ref<string | null>(null);
+const autoRefresh = ref(false);
+const refreshing = ref(false);
+const refreshError = ref<string | null>(null);
+
+const isActive = computed(() => props.variant === 'active');
+
+const noopWarn = { warn: (): void => {} };
+
+function doRefreshFromBody(body: string): void {
+	const keys = extractI18nKeys(body ?? '', 'interface-refresh', noopWarn);
+	const currentUnused = (formValues?.value?.unused_i18n_variables as StringMap | undefined) ?? {};
+	const result = reconcileTranslationStrings(local.value, currentUnused, keys);
+	if (JSON.stringify(result.i18n_variables) !== JSON.stringify(local.value)) {
+		commit(result.i18n_variables);
+	}
+	if (typeof setFieldValue === 'function') {
+		setFieldValue('unused_i18n_variables', result.unused_i18n_variables);
+	}
+	void nextTick(autogrowAll);
+}
+
+async function onClickRefresh(): Promise<void> {
+	if (!isActive.value || refreshing.value || props.disabled) return;
+	refreshing.value = true;
+	refreshError.value = null;
+	try {
+		const tmplId = formValues?.value?.email_templates_id as string | number | undefined;
+		if (!tmplId) {
+			refreshError.value = 'No template id available yet (save the row first).';
+			return;
+		}
+		const res = await api.get(`/items/email_templates/${tmplId}`, {
+			params: { fields: 'body' },
+		});
+		const body = (res?.data?.data?.body as string | null | undefined) ?? '';
+		doRefreshFromBody(body);
+	} catch (err) {
+		refreshError.value = err instanceof Error ? err.message : 'Refresh failed.';
+	} finally {
+		refreshing.value = false;
+	}
+}
+
+function onBodyBlurEvent(ev: Event): void {
+	if (!isActive.value || !autoRefresh.value) return;
+	const detail = (ev as CustomEvent<{ templateId?: unknown; body?: unknown }>).detail ?? {};
+	const myTemplateId = formValues?.value?.email_templates_id as string | number | undefined;
+	if (myTemplateId && detail.templateId && myTemplateId !== detail.templateId) return;
+	doRefreshFromBody(typeof detail.body === 'string' ? detail.body : '');
+}
+
+async function onToggleAutoRefresh(next: boolean): Promise<void> {
+	autoRefresh.value = next;
+	if (!userId.value) return;
+	try {
+		await api.patch(`/items/email_extension_user_prefs/${userId.value}`, {
+			auto_refresh_i18n_on_body_change: next,
+		});
+	} catch {
+		try {
+			await api.post('/items/email_extension_user_prefs', {
+				user: userId.value,
+				auto_refresh_i18n_on_body_change: next,
+			});
+		} catch {
+			// Best-effort: pref not persisted, but in-session toggle still works.
+		}
+	}
+}
+
+onMounted(async () => {
+	if (!isActive.value) return;
+	try {
+		const me = await api.get('/users/me', { params: { fields: 'id' } });
+		userId.value = (me?.data?.data?.id as string | undefined) ?? null;
+		if (userId.value) {
+			const pref = await api
+				.get(`/items/email_extension_user_prefs/${userId.value}`)
+				.catch(() => null);
+			autoRefresh.value =
+				pref?.data?.data?.auto_refresh_i18n_on_body_change === true;
+		}
+	} catch {
+		// User store not reachable — auto-refresh stays off.
+	}
+	window.addEventListener('i18n-email:body-blur', onBodyBlurEvent);
+});
+
+onBeforeUnmount(() => {
+	window.removeEventListener('i18n-email:body-blur', onBodyBlurEvent);
+});
 </script>
 
 <template>
@@ -169,6 +274,27 @@ function setJsonTextareaRef(el: Element | null): void {
 		:class="[`variant-${variant}`, { 'is-empty': isEmpty }]">
 		<div class="toolbar">
 			<v-button
+				v-if="isActive"
+				small
+				secondary
+				:loading="refreshing"
+				:disabled="disabled || refreshing"
+				v-tooltip="'Re-extract i18n.* keys from the current body. UI only — does not save.'"
+				@click="onClickRefresh">
+				<v-icon name="refresh" left small />
+				Refresh from body
+			</v-button>
+			<label v-if="isActive" class="auto-refresh">
+				<v-checkbox
+					:model-value="autoRefresh"
+					:disabled="disabled"
+					@update:model-value="onToggleAutoRefresh" />
+				<span v-tooltip="'When on, the variables list rebuilds whenever the body field loses focus.'">
+					Auto on body blur
+				</span>
+			</label>
+			<span class="spacer" />
+			<v-button
 				small
 				secondary
 				:disabled="disabled"
@@ -176,6 +302,10 @@ function setJsonTextareaRef(el: Element | null): void {
 				<v-icon :name="toggleIcon" left small />
 				{{ toggleLabel }}
 			</v-button>
+		</div>
+		<div v-if="refreshError" class="json-error">
+			<v-icon name="error" small />
+			<span>{{ refreshError }}</span>
 		</div>
 
 		<div v-if="view === 'form'" class="form-view">
@@ -250,7 +380,23 @@ function setJsonTextareaRef(el: Element | null): void {
 
 .toolbar {
 	display: flex;
-	justify-content: flex-end;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+
+.toolbar .spacer {
+	flex: 1 1 auto;
+}
+
+.auto-refresh {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	font-size: 13px;
+	color: var(--theme--foreground-subdued, var(--foreground-subdued));
+	cursor: pointer;
+	user-select: none;
 }
 
 .empty {

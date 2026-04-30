@@ -169,7 +169,7 @@ export const EMAIL_TEMPLATES_COLLECTION: CollectionPayload = {
 			field: 'body',
 			type: 'text',
 			meta: {
-				interface: 'input-code',
+				interface: 'body-i18n-aware',
 				options: { language: 'htmlmixed', lineNumber: true },
 				note: 'Full Liquid template (e.g. {% layout "base" %}{% block content %}…{% endblock %}).',
 				width: 'full',
