@@ -33,6 +33,12 @@ export type EmailTemplateTranslationRow = {
 	subject: string;
 	from_name: string | null;
 	strings: TranslationStrings;
+	/**
+	 * Optional in the type because rows created before this column was
+	 * added (and rows mid-migration) may not have it populated yet —
+	 * the reconcile pass treats `null`/`undefined` as an empty map.
+	 */
+	unused_strings?: TranslationStrings;
 };
 
 export type EmailTemplateVariableRow = {

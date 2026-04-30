@@ -58,6 +58,7 @@ describe('hook registration', () => {
 		expect(handlers.filters['email_templates.items.create']).toBeTypeOf('function');
 		expect(handlers.filters['email_templates.items.update']).toBeTypeOf('function');
 		expect(handlers.filters['email_templates.items.delete']).toBeTypeOf('function');
+		expect(handlers.filters['email_template_translations.items.create']).toBeTypeOf('function');
 		expect(handlers.filters['email_template_variables.items.delete']).toBeTypeOf('function');
 		expect(handlers.inits['app.after']).toBeTypeOf('function');
 	});
@@ -331,4 +332,140 @@ describe('hook registration', () => {
 		await handlers.actions['email_templates.items.update']!({ keys: ['1'] });
 		expect(await readFile(join(dir, 'p.liquid'), 'utf-8')).toBe('pb');
 	});
+
+	// ──────────── translation create filter (i18n var pre-fill) ────────────
+	it('translations create filter pre-fills strings from parent body', async () => {
+		const { handlers, services } = register({ EMAIL_TEMPLATES_PATH: dir });
+		services._stores.email_templates = [
+			{ id: 'tpl-1', template_key: 'password-reset', body: '{{ i18n.heading }} {{ i18n.body }}' },
+		];
+		const out = (await handlers.filters['email_template_translations.items.create']!({
+			email_templates_id: 'tpl-1',
+			languages_code: 'en-US',
+		})) as any;
+		expect(out.strings).toEqual({ heading: '', body: '' });
+		expect(out.unused_strings).toEqual({});
+	});
+
+	it('translations create filter preserves caller-supplied strings', async () => {
+		const { handlers, services } = register({ EMAIL_TEMPLATES_PATH: dir });
+		services._stores.email_templates = [
+			{ id: 'tpl-1', template_key: 'p', body: '{{ i18n.heading }}' },
+		];
+		const out = (await handlers.filters['email_template_translations.items.create']!({
+			email_templates_id: 'tpl-1',
+			strings: { custom: 'value' },
+		})) as any;
+		expect(out.strings).toEqual({ custom: 'value' });
+		expect(out.unused_strings).toEqual({});
+	});
+
+	it('translations create filter preserves caller-supplied unused_strings (both maps already set)', async () => {
+		const { handlers, services } = register({ EMAIL_TEMPLATES_PATH: dir });
+		services._stores.email_templates = [
+			{ id: 'tpl-1', template_key: 'p', body: '{{ i18n.heading }}' },
+		];
+		const out = (await handlers.filters['email_template_translations.items.create']!({
+			email_templates_id: 'tpl-1',
+			strings: { custom: 'value' },
+			unused_strings: { kept: 'k' },
+		})) as any;
+		expect(out.strings).toEqual({ custom: 'value' });
+		expect(out.unused_strings).toEqual({ kept: 'k' });
+	});
+
+	it('translations create filter preserves caller-supplied unused_strings when strings empty', async () => {
+		const { handlers, services } = register({ EMAIL_TEMPLATES_PATH: dir });
+		services._stores.email_templates = [
+			{ id: 'tpl-1', template_key: 'p', body: '{{ i18n.heading }}' },
+		];
+		const out = (await handlers.filters['email_template_translations.items.create']!({
+			email_templates_id: 'tpl-1',
+			unused_strings: { kept: 'k' },
+		})) as any;
+		expect(out.strings).toEqual({ heading: '' });
+		expect(out.unused_strings).toEqual({ kept: 'k' });
+	});
+
+	it('translations create filter no-op when parent id missing', async () => {
+		const { handlers } = register({ EMAIL_TEMPLATES_PATH: dir });
+		const out = (await handlers.filters['email_template_translations.items.create']!({
+			languages_code: 'en-US',
+		})) as any;
+		expect(out).toEqual({ languages_code: 'en-US' });
+	});
+
+	it('translations create filter falls back to empty maps when parent missing', async () => {
+		const { handlers } = register({ EMAIL_TEMPLATES_PATH: dir });
+		// no email_templates row exists for this id
+		const out = (await handlers.filters['email_template_translations.items.create']!({
+			email_templates_id: 'missing',
+		})) as any;
+		expect(out.strings).toEqual({});
+		expect(out.unused_strings).toEqual({});
+	});
+
+	it('translations create filter warns when getSchema throws', async () => {
+		const { handlers, logger } = register(
+			{ EMAIL_TEMPLATES_PATH: dir },
+			{
+				getSchema: async () => {
+					throw new Error('schema-down');
+				},
+			},
+		);
+		const out = (await handlers.filters['email_template_translations.items.create']!({
+			email_templates_id: 'tpl-1',
+		})) as any;
+		expect(out.strings).toEqual({});
+		expect(logger.warn).toHaveBeenCalledWith(
+			expect.stringContaining('Translation pre-fill skipped'),
+		);
+	});
+
+	// ──────────── reconcile invocation in template create/update actions ────────────
+	it('create action also reconciles existing translation rows', async () => {
+		const { handlers, services } = register({ EMAIL_TEMPLATES_PATH: dir });
+		// Pre-existing translation row attached to the template being created.
+		services._stores.email_template_translations = [
+			{
+				id: 't1',
+				email_templates_id: 'tpl-1',
+				languages_code: 'en-US',
+				strings: { stale: 'X' },
+				unused_strings: {},
+			},
+		];
+		await handlers.actions['email_templates.items.create']!({
+			key: 'tpl-1',
+			payload: { template_key: 'pr', body: '{{ i18n.heading }}' },
+		});
+		const t1 = services._stores.email_template_translations!.find((r: any) => r.id === 't1');
+		expect(t1.strings).toEqual({ heading: '' });
+		expect(t1.unused_strings).toEqual({ stale: 'X' });
+	});
+
+	it('update action reconciles when body changes', async () => {
+		const { handlers, services } = register({ EMAIL_TEMPLATES_PATH: dir });
+		services._stores.email_templates = [
+			{ id: '1', template_key: 'pr', body: '{{ i18n.body }}' },
+		];
+		services._stores.email_template_translations = [
+			{
+				id: 't1',
+				email_templates_id: '1',
+				languages_code: 'en-US',
+				strings: { heading: 'H', orphan: 'O' },
+				unused_strings: {},
+			},
+		];
+		await handlers.actions['email_templates.items.update']!({
+			keys: ['1'],
+			payload: { body: '{{ i18n.body }}' },
+		});
+		const t1 = services._stores.email_template_translations!.find((r: any) => r.id === 't1');
+		expect(t1.strings).toEqual({ body: '' });
+		expect(t1.unused_strings).toEqual({ heading: 'H', orphan: 'O' });
+	});
 });
+

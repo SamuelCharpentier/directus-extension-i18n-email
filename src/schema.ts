@@ -275,10 +275,30 @@ export const EMAIL_TEMPLATE_TRANSLATIONS_COLLECTION: CollectionPayload = {
 			field: 'strings',
 			type: 'json',
 			meta: {
-				interface: 'input-code',
-				options: { language: 'JSON' },
-				note: 'Flat key→string map. Injected into Liquid as {{ i18n.* }}.',
+				interface: 'i18n-strings-editor',
+				options: { mode: 'form', unusedFieldName: 'unused_strings' },
+				note: 'Active i18n variables referenced by the template body. Auto-reconciled on body save.',
+				translations: [
+					{ language: 'en-US', translation: 'i18n Variables' },
+					{ language: 'fr-FR', translation: 'Variables i18n' },
+				],
 				width: 'full',
+			},
+			schema: { is_nullable: false, default_value: '{}' },
+		},
+		{
+			field: 'unused_strings',
+			type: 'json',
+			meta: {
+				interface: 'i18n-strings-editor',
+				options: { mode: 'form', unusedFieldName: '' },
+				note: 'Variables stored in this row that are no longer referenced by the template body. Editable; deletable from the i18n Variables editor on the `strings` field.',
+				translations: [
+					{ language: 'en-US', translation: 'Unused Variables' },
+					{ language: 'fr-FR', translation: 'Variables inutilisées' },
+				],
+				width: 'full',
+				hidden: true,
 			},
 			schema: { is_nullable: false, default_value: '{}' },
 		},

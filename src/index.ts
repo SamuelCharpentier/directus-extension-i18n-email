@@ -2,10 +2,25 @@ import type { EmailOptions, HookConfig } from '@directus/types';
 import { runBootstrap } from './bootstrap';
 import { runSendFilter } from './send';
 import { syncTemplateBody } from './sync';
-import { LANGUAGES_COLLECTION, TEMPLATES_COLLECTION, VARIABLES_COLLECTION } from './constants';
+import {
+	LANGUAGES_COLLECTION,
+	TEMPLATES_COLLECTION,
+	TRANSLATIONS_COLLECTION,
+	VARIABLES_COLLECTION,
+} from './constants';
 import { computeChecksum } from './integrity';
 import { localizeLangCode } from './directus';
-import type { EmailTemplateRow, EmailTemplateVariableRow, LanguageRow } from './types';
+import {
+	buildInitialStrings,
+	fetchTemplateBodyById,
+	reconcileTranslationsForTemplate,
+} from './reconcile';
+import type {
+	EmailTemplateRow,
+	EmailTemplateTranslationRow,
+	EmailTemplateVariableRow,
+	LanguageRow,
+} from './types';
 
 function templatesPathFromEnv(env: Record<string, unknown>): string {
 	return typeof env['EMAIL_TEMPLATES_PATH'] === 'string'
@@ -70,6 +85,7 @@ const hook: HookConfig = ({ filter, action, init }, { services, logger, getSchem
 				logger,
 				'body-create',
 			);
+			await reconcileTranslationsForTemplate(full, services, schema, logger);
 		} catch (err) {
 			logger.error(`[i18n-email] Post-create sync failed: ${(err as Error).message}`);
 		}
@@ -99,6 +115,7 @@ const hook: HookConfig = ({ filter, action, init }, { services, logger, getSchem
 					logger,
 					'body-update',
 				);
+				await reconcileTranslationsForTemplate(row, services, schema, logger);
 			}
 		} catch (err) {
 			logger.error(`[i18n-email] Post-update sync failed: ${(err as Error).message}`);
@@ -128,6 +145,39 @@ const hook: HookConfig = ({ filter, action, init }, { services, logger, getSchem
 			patch.checksum = computeChecksum({ body: patch.body ?? '' });
 		}
 		return patch;
+	});
+
+	// ──────────── Pre-fill `strings` on translation create ────────────
+	// When an admin adds a new language for an existing template, derive
+	// the empty key map from the parent body so the UI lands on a fully
+	// scaffolded form. Existing values supplied in the create payload
+	// are preserved.
+	filter(`${TRANSLATIONS_COLLECTION}.items.create`, async (payload: unknown) => {
+		const row = payload as Partial<EmailTemplateTranslationRow>;
+		const parentId = row.email_templates_id;
+		if (!parentId) return row;
+		const hasStrings =
+			row.strings &&
+			typeof row.strings === 'object' &&
+			Object.keys(row.strings).length > 0;
+		if (hasStrings) {
+			if (!row.unused_strings) row.unused_strings = {};
+			return row;
+		}
+		try {
+			const schema = await getSchema();
+			const tpl = await fetchTemplateBodyById(String(parentId), services, schema, logger);
+			if (tpl) {
+				row.strings = buildInitialStrings(tpl.body, tpl.template_key, logger);
+			}
+		} catch (err) {
+			logger.warn(
+				`[i18n-email] Translation pre-fill skipped: ${(err as Error).message}`,
+			);
+		}
+		if (!row.strings) row.strings = {};
+		if (!row.unused_strings) row.unused_strings = {};
+		return row;
 	});
 
 	// ──────────── Protected-row delete guards ────────────
