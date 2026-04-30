@@ -12,6 +12,7 @@ import { computeChecksum } from './integrity';
 import { localizeLangCode } from './directus';
 import {
 	buildInitialStrings,
+	coerceI18nVariables,
 	fetchTemplateBodyById,
 	reconcileTranslationsForTemplate,
 } from './reconcile';
@@ -154,17 +155,23 @@ const hook: HookConfig = (
 	// When an admin adds a new language for an existing template, derive
 	// the empty key map from the parent body so the UI lands on a fully
 	// scaffolded form. Existing values supplied in the create payload
-	// are preserved.
+	// are preserved (and coerced to the canonical shape if the caller
+	// supplied legacy bare keys, e.g. seeds).
 	filter(`${TRANSLATIONS_COLLECTION}.items.create`, async (payload: unknown) => {
 		const row = payload as Partial<EmailTemplateTranslationRow>;
 		const parentId = row.email_templates_id;
 		if (!parentId) return row;
-		const hasStrings =
-			row.i18n_variables &&
-			typeof row.i18n_variables === 'object' &&
-			Object.keys(row.i18n_variables).length > 0;
-		if (hasStrings) {
-			if (!row.unused_i18n_variables) row.unused_i18n_variables = {};
+		const incoming = row.i18n_variables;
+		const incomingHasKeys =
+			(typeof incoming === 'string' && incoming.trim().length > 0) ||
+			(incoming &&
+				typeof incoming === 'object' &&
+				!Array.isArray(incoming) &&
+				Object.keys(incoming as Record<string, unknown>).length > 0);
+		if (incomingHasKeys) {
+			row.i18n_variables = coerceI18nVariables(
+				incoming as Parameters<typeof coerceI18nVariables>[0],
+			);
 			return row;
 		}
 		try {
@@ -176,8 +183,7 @@ const hook: HookConfig = (
 		} catch (err) {
 			logger.warn(`[i18n-email] Translation pre-fill skipped: ${(err as Error).message}`);
 		}
-		if (!row.i18n_variables) row.i18n_variables = {};
-		if (!row.unused_i18n_variables) row.unused_i18n_variables = {};
+		if (!row.i18n_variables) row.i18n_variables = { in_template: {}, unused: {} };
 		return row;
 	});
 

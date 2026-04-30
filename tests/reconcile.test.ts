@@ -5,6 +5,7 @@ import {
 	buildInitialStrings,
 	reconcileTranslationsForTemplate,
 	fetchTemplateBodyById,
+	coerceI18nVariables,
 } from '../src/reconcile';
 import { makeServices, makeLogger, makeSchema } from './helpers';
 
@@ -91,123 +92,197 @@ describe('extractI18nKeys', () => {
 	});
 });
 
+describe('coerceI18nVariables', () => {
+	it('returns empty shape for null/undefined', () => {
+		expect(coerceI18nVariables(null)).toEqual({ in_template: {}, unused: {} });
+		expect(coerceI18nVariables(undefined)).toEqual({ in_template: {}, unused: {} });
+	});
+
+	it('returns empty shape for empty string', () => {
+		expect(coerceI18nVariables('')).toEqual({ in_template: {}, unused: {} });
+		expect(coerceI18nVariables('   ')).toEqual({ in_template: {}, unused: {} });
+	});
+
+	it('parses JSON string of new shape', () => {
+		const out = coerceI18nVariables('{"in_template":{"a":"A"},"unused":{"b":"B"}}');
+		expect(out).toEqual({ in_template: { a: 'A' }, unused: { b: 'B' } });
+	});
+
+	it('parses JSON string of legacy bare shape (treats as in_template)', () => {
+		const out = coerceI18nVariables('{"a":"A","b":"B"}');
+		expect(out).toEqual({ in_template: { a: 'A', b: 'B' }, unused: {} });
+	});
+
+	it('passes through new shape', () => {
+		const out = coerceI18nVariables({ in_template: { a: 'A' }, unused: { b: 'B' } });
+		expect(out).toEqual({ in_template: { a: 'A' }, unused: { b: 'B' } });
+	});
+
+	it('promotes legacy bare object into in_template', () => {
+		const out = coerceI18nVariables({ a: 'A', b: 'B' } as never);
+		expect(out).toEqual({ in_template: { a: 'A', b: 'B' }, unused: {} });
+	});
+
+	it('returns empty for malformed JSON string', () => {
+		expect(coerceI18nVariables('not json')).toEqual({ in_template: {}, unused: {} });
+	});
+
+	it('returns empty for arrays', () => {
+		expect(coerceI18nVariables([1, 2, 3] as never)).toEqual({ in_template: {}, unused: {} });
+	});
+
+	it('coerces non-string flat values to strings', () => {
+		const out = coerceI18nVariables({ in_template: { n: 5, b: true, x: null } as never });
+		expect(out.in_template).toEqual({ n: '5', b: 'true', x: '' });
+		expect(out.unused).toEqual({});
+	});
+
+	it('drops nested objects from flat sections', () => {
+		const out = coerceI18nVariables({
+			in_template: { ok: 'A', nested: { x: 'y' } } as never,
+			unused: {},
+		});
+		expect(out.in_template).toEqual({ ok: 'A' });
+	});
+});
+
 describe('reconcileTranslationStrings', () => {
 	it('adds missing keys as empty', () => {
-		const r = reconcileTranslationStrings({}, {}, new Set(['a', 'b']));
-		expect(r.i18n_variables).toEqual({ a: '', b: '' });
-		expect(r.unused_i18n_variables).toEqual({});
+		const r = reconcileTranslationStrings(
+			{ in_template: {}, unused: {} },
+			new Set(['a', 'b']),
+		);
+		expect(r.value.in_template).toEqual({ a: '', b: '' });
+		expect(r.value.unused).toEqual({});
 		expect(r.changed).toBe(true);
 	});
 
 	it('moves orphan keys to unused, preserving values', () => {
-		const r = reconcileTranslationStrings({ a: 'A', orphan: 'O' }, {}, new Set(['a']));
-		expect(r.i18n_variables).toEqual({ a: 'A' });
-		expect(r.unused_i18n_variables).toEqual({ orphan: 'O' });
+		const r = reconcileTranslationStrings(
+			{ in_template: { a: 'A', orphan: 'O' }, unused: {} },
+			new Set(['a']),
+		);
+		expect(r.value.in_template).toEqual({ a: 'A' });
+		expect(r.value.unused).toEqual({ orphan: 'O' });
 		expect(r.changed).toBe(true);
 	});
 
-	it('promotes unused keys back to active when re-referenced', () => {
-		const r = reconcileTranslationStrings({ a: 'A' }, { b: 'B-prev' }, new Set(['a', 'b']));
-		expect(r.i18n_variables).toEqual({ a: 'A', b: 'B-prev' });
-		expect(r.unused_i18n_variables).toEqual({});
+	it('promotes unused keys back to in_template when re-referenced', () => {
+		const r = reconcileTranslationStrings(
+			{ in_template: { a: 'A' }, unused: { b: 'B-prev' } },
+			new Set(['a', 'b']),
+		);
+		expect(r.value.in_template).toEqual({ a: 'A', b: 'B-prev' });
+		expect(r.value.unused).toEqual({});
 		expect(r.changed).toBe(true);
 	});
 
 	it('is idempotent', () => {
 		const used = new Set(['a', 'b']);
-		const first = reconcileTranslationStrings({ a: 'A' }, { b: 'B' }, used);
-		const second = reconcileTranslationStrings(
-			first.i18n_variables,
-			first.unused_i18n_variables,
+		const first = reconcileTranslationStrings(
+			{ in_template: { a: 'A' }, unused: { b: 'B' } },
 			used,
 		);
-		expect(second.i18n_variables).toEqual(first.i18n_variables);
-		expect(second.unused_i18n_variables).toEqual(first.unused_i18n_variables);
+		const second = reconcileTranslationStrings(first.value, used);
+		expect(second.value).toEqual(first.value);
 		expect(second.changed).toBe(false);
 	});
 
 	it('reports no change when state already matches usage', () => {
-		const r = reconcileTranslationStrings({ a: 'A' }, {}, new Set(['a']));
+		const r = reconcileTranslationStrings(
+			{ in_template: { a: 'A' }, unused: {} },
+			new Set(['a']),
+		);
 		expect(r.changed).toBe(false);
 	});
 
 	it('handles null current state', () => {
-		const r = reconcileTranslationStrings(null, null, new Set(['a']));
-		expect(r.i18n_variables).toEqual({ a: '' });
-		expect(r.unused_i18n_variables).toEqual({});
+		const r = reconcileTranslationStrings(null, new Set(['a']));
+		expect(r.value.in_template).toEqual({ a: '' });
+		expect(r.value.unused).toEqual({});
 		expect(r.changed).toBe(true);
 	});
 
 	it('handles undefined current state', () => {
-		const r = reconcileTranslationStrings(undefined, undefined, new Set(['a']));
-		expect(r.i18n_variables).toEqual({ a: '' });
+		const r = reconcileTranslationStrings(undefined, new Set(['a']));
+		expect(r.value.in_template).toEqual({ a: '' });
 		expect(r.changed).toBe(true);
 	});
 
 	it('detects no-change when both maps are empty and no keys used', () => {
-		const r = reconcileTranslationStrings({}, {}, new Set());
+		const r = reconcileTranslationStrings({ in_template: {}, unused: {} }, new Set());
 		expect(r.changed).toBe(false);
 	});
 
-	it('detects change via differing values (length equal)', () => {
-		// Both have one key but value differs — first the helper drops `a`
-		// (orphan), then re-adds it as `b`. We exercise the value-equality
-		// branch directly:
-		const r = reconcileTranslationStrings({ a: 'old' }, {}, new Set(['a']));
+	it('detects no-change when value matches usage exactly', () => {
+		const r = reconcileTranslationStrings(
+			{ in_template: { a: 'old' }, unused: {} },
+			new Set(['a']),
+		);
 		expect(r.changed).toBe(false);
 	});
 
 	it('detects change when key sets differ but counts match', () => {
-		// currentStrings = {a:''}, usedKeys={b} → after reconcile strings={b:''}, unused={a:''}.
-		// Both maps end up size 1, so the equality check must fall through
-		// to the per-key membership branch (`!(k in b)` returns false).
-		const r = reconcileTranslationStrings({ a: '' }, {}, new Set(['b']));
-		expect(r.i18n_variables).toEqual({ b: '' });
-		expect(r.unused_i18n_variables).toEqual({ a: '' });
+		const r = reconcileTranslationStrings(
+			{ in_template: { a: '' }, unused: {} },
+			new Set(['b']),
+		);
+		expect(r.value.in_template).toEqual({ b: '' });
+		expect(r.value.unused).toEqual({ a: '' });
+		expect(r.changed).toBe(true);
+	});
+
+	it('accepts legacy bare-key shape and treats it as in_template', () => {
+		const r = reconcileTranslationStrings(
+			{ a: 'A', orphan: 'O' } as never,
+			new Set(['a']),
+		);
+		expect(r.value.in_template).toEqual({ a: 'A' });
+		expect(r.value.unused).toEqual({ orphan: 'O' });
 		expect(r.changed).toBe(true);
 	});
 
 	// Regression: ItemsService can return JSON columns as raw strings; the old
-	// `{...currentActive}` spread char-soup'd them into 0/1/2-keyed garbage and
-	// then demoted every char into `unused_i18n_variables`. coerceMap fixes it.
+	// `{...currentValue}` spread char-soup'd them into 0/1/2-keyed garbage.
 	it('parses JSON-string inputs without char-spread corruption', () => {
-		const activeStr = '{"heading":"H","body":"","cta":"","expiry_notice":""}';
+		const stored = '{"in_template":{"heading":"H","body":"","cta":"","expiry_notice":""},"unused":{}}';
 		const r = reconcileTranslationStrings(
-			activeStr as unknown as Record<string, string>,
-			null,
+			stored,
 			new Set(['heading', 'body', 'cta', 'expiry_notice_message']),
 		);
-		expect(r.i18n_variables).toEqual({
+		expect(r.value.in_template).toEqual({
 			heading: 'H',
 			body: '',
 			cta: '',
 			expiry_notice_message: '',
 		});
-		expect(r.unused_i18n_variables).toEqual({ expiry_notice: '' });
-		// No numeric/character-soup keys leaked into either map.
-		expect(Object.keys(r.unused_i18n_variables).every((k) => /^[a-z_]/i.test(k))).toBe(true);
+		expect(r.value.unused).toEqual({ expiry_notice: '' });
+		expect(Object.keys(r.value.unused).every((k) => /^[a-z_]/i.test(k))).toBe(true);
+	});
+
+	it('parses JSON-string of legacy bare shape', () => {
+		const stored = '{"heading":"H","orphan":"O"}';
+		const r = reconcileTranslationStrings(stored, new Set(['heading']));
+		expect(r.value.in_template).toEqual({ heading: 'H' });
+		expect(r.value.unused).toEqual({ orphan: 'O' });
 	});
 
 	it('treats malformed string inputs as empty maps', () => {
-		const r = reconcileTranslationStrings(
-			'not json' as unknown as Record<string, string>,
-			'[1,2,3]' as unknown as Record<string, string>,
-			new Set(['x']),
-		);
-		expect(r.i18n_variables).toEqual({ x: '' });
-		expect(r.unused_i18n_variables).toEqual({});
+		const r = reconcileTranslationStrings('not json', new Set(['x']));
+		expect(r.value.in_template).toEqual({ x: '' });
+		expect(r.value.unused).toEqual({});
 	});
 });
 
 describe('buildInitialStrings', () => {
-	it('returns one empty value per referenced key', () => {
+	it('returns one empty in_template entry per referenced key, empty unused', () => {
 		const out = buildInitialStrings('{{ i18n.a }} {{ i18n.b }}', 'x', mkLogger());
-		expect(out).toEqual({ a: '', b: '' });
+		expect(out).toEqual({ in_template: { a: '', b: '' }, unused: {} });
 	});
 
-	it('returns empty object for body with no i18n usage', () => {
+	it('returns empty shape for body with no i18n usage', () => {
 		const out = buildInitialStrings('{{ user.name }}', 'x', mkLogger());
-		expect(out).toEqual({});
+		expect(out).toEqual({ in_template: {}, unused: {} });
 	});
 });
 
@@ -221,23 +296,23 @@ describe('reconcileTranslationsForTemplate', () => {
 							id: 't1',
 							email_templates_id: 'tpl-1',
 							languages_code: 'en-US',
-							i18n_variables: { heading: 'Hi', orphan: 'old' },
-							unused_i18n_variables: {},
+							i18n_variables: {
+								in_template: { heading: 'Hi', orphan: 'old' },
+								unused: {},
+							},
 						},
 						{
 							id: 't2',
 							email_templates_id: 'tpl-1',
 							languages_code: 'fr-FR',
-							i18n_variables: { heading: 'Salut' },
-							unused_i18n_variables: {},
+							i18n_variables: { in_template: { heading: 'Salut' }, unused: {} },
 						},
 						{
 							// noise: belongs to a different template, must be ignored
 							id: 't3',
 							email_templates_id: 'tpl-other',
 							languages_code: 'en-US',
-							i18n_variables: {},
-							unused_i18n_variables: {},
+							i18n_variables: { in_template: {}, unused: {} },
 						},
 					],
 				},
@@ -252,10 +327,12 @@ describe('reconcileTranslationsForTemplate', () => {
 		);
 		expect(res).toEqual({ scanned: 2, updated: 1 });
 		const t1 = services._stores.email_template_translations!.find((r: any) => r.id === 't1');
-		expect(t1.i18n_variables).toEqual({ heading: 'Hi' });
-		expect(t1.unused_i18n_variables).toEqual({ orphan: 'old' });
+		expect(t1.i18n_variables).toEqual({
+			in_template: { heading: 'Hi' },
+			unused: { orphan: 'old' },
+		});
 		const t2 = services._stores.email_template_translations!.find((r: any) => r.id === 't2');
-		expect(t2.i18n_variables).toEqual({ heading: 'Salut' });
+		expect(t2.i18n_variables).toEqual({ in_template: { heading: 'Salut' }, unused: {} });
 		expect(logger.info).toHaveBeenCalledWith(expect.stringContaining('Reconciled 1/2'));
 	});
 
@@ -304,8 +381,7 @@ describe('reconcileTranslationsForTemplate', () => {
 							id: 't1',
 							email_templates_id: 'tpl-1',
 							languages_code: 'en-US',
-							i18n_variables: { orphan: 'x' },
-							unused_i18n_variables: {},
+							i18n_variables: { in_template: { orphan: 'x' }, unused: {} },
 						},
 					],
 					updateOne: async () => {

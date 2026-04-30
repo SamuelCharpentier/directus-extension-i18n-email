@@ -19,10 +19,8 @@ describe('interface entry', () => {
 		expect((config.types as string[]).includes('json')).toBe(true);
 		expect(config.component).toBeTruthy();
 
-		const options = config.options as Array<{ field: string; meta?: { interface?: string } }>;
+		const options = config.options as Array<{ field: string }>;
 		expect(Array.isArray(options)).toBe(true);
-		const variant = options.find((o) => o.field === 'variant');
-		expect(variant).toBeTruthy();
-		expect(variant?.meta?.interface).toBe('select-dropdown');
+		expect(options).toHaveLength(0);
 	});
 });

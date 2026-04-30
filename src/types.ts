@@ -14,6 +14,17 @@ export type Logger = {
 /** Flat key→string map injected into Liquid as `{{ i18n.* }}`. */
 export type TranslationStrings = Record<string, string>;
 
+/**
+ * Unified shape stored in `email_template_translations.i18n_variables`.
+ * `in_template` = keys currently referenced by the parent template body.
+ * `unused` = keys preserved from previous edits (still hold their values
+ * in case the admin re-adds the variable to the body).
+ */
+export type I18nVariables = {
+	in_template: TranslationStrings;
+	unused: TranslationStrings;
+};
+
 export type EmailTemplateRow = {
 	id?: string;
 	template_key: string;
@@ -32,13 +43,13 @@ export type EmailTemplateTranslationRow = {
 	languages_code: string;
 	subject: string;
 	from_name: string | null;
-	i18n_variables: TranslationStrings;
 	/**
-	 * Optional in the type because rows created before this column was
-	 * added (and rows mid-migration) may not have it populated yet —
-	 * the reconcile pass treats `null`/`undefined` as an empty map.
+	 * Stored shape is `I18nVariables`, but the row may arrive from the DB
+	 * driver as a JSON string (driver-dependent) or in the legacy
+	 * bare-key shape from older boots. Server-side reconcile coerces
+	 * to the canonical shape on every pass.
 	 */
-	unused_i18n_variables?: TranslationStrings;
+	i18n_variables: I18nVariables | TranslationStrings | string | null;
 };
 
 export type EmailTemplateVariableRow = {

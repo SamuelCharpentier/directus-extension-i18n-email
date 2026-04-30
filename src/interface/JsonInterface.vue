@@ -1,137 +1,103 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { dlog } from './debug';
+import { getLastBroadcast, subscribe, type Broadcast } from './i18nBus';
 
 type StringMap = Record<string, string>;
+type I18nVariables = { in_template: StringMap; unused: StringMap };
+type Section = 'in_template' | 'unused';
 
 const props = withDefaults(
 	defineProps<{
-		value: StringMap | string | null | undefined;
+		value: I18nVariables | StringMap | string | null | undefined;
 		disabled?: boolean;
-		variant?: 'active' | 'unused';
 	}>(),
 	{
-		value: () => ({}),
+		value: () => ({ in_template: {}, unused: {} }),
 		disabled: false,
-		variant: 'active',
 	},
 );
 
 const emit = defineEmits<{
-	(e: 'input', value: StringMap | null): void;
+	(e: 'input', value: I18nVariables | null): void;
 }>();
 
-const LOG_TAG = (): string =>
-	`[i18n-email/json:${props.variant === 'unused' ? 'unused_i18n_variables' : 'i18n_variables'}]`;
+const LOG = '[i18n-email/json]';
 
-/**
- * Describe a value for the console without spreading it. Reports
- * type, constructor, length-or-keys, and a short preview. Mirrors
- * the helper in TranslationsInterface so log output is uniform.
- */
-function describe(v: unknown): Record<string, unknown> {
-	const t = typeof v;
-	const out: Record<string, unknown> = { typeof: t };
-	if (v === null) {
-		out.isNull = true;
-		return out;
-	}
-	if (v === undefined) {
-		out.isUndefined = true;
-		return out;
-	}
-	if (t === 'string') {
-		const s = v as string;
-		out.length = s.length;
-		out.preview = s.length > 80 ? `${s.slice(0, 80)}…` : s;
-		out.startsWithBrace = s.trimStart().startsWith('{');
-		return out;
-	}
-	if (t === 'object') {
-		out.isArray = Array.isArray(v);
-		out.ctor = (v as object).constructor?.name ?? '<none>';
-		out.isBoxedString = v instanceof String;
+/** Coerce arbitrary stored value into the canonical two-section shape. */
+function coerce(v: I18nVariables | StringMap | string | null | undefined): I18nVariables {
+	if (v === null || v === undefined) return { in_template: {}, unused: {} };
+	if (typeof v === 'string') {
+		const trimmed = v.trim();
+		if (!trimmed) return { in_template: {}, unused: {} };
 		try {
-			const keys = Object.keys(v as object);
-			out.keyCount = keys.length;
-			out.firstKeys = keys.slice(0, 8);
-			let charSoup = keys.length > 1;
-			for (let i = 0; i < Math.min(keys.length, 10); i++) {
-				if (keys[i] !== String(i)) {
-					charSoup = false;
-					break;
-				}
-				const val = (v as Record<string, unknown>)[keys[i]!];
-				if (typeof val !== 'string' || val.length !== 1) {
-					charSoup = false;
-					break;
-				}
-			}
-			out.looksLikeCharacterSoup = charSoup;
-		} catch (err) {
-			out.keysError = (err as Error).message;
+			const parsed = JSON.parse(trimmed);
+			return coerce(parsed);
+		} catch {
+			return { in_template: {}, unused: {} };
 		}
-		return out;
+	}
+	if (typeof v !== 'object' || Array.isArray(v)) return { in_template: {}, unused: {} };
+	const obj = v as Record<string, unknown>;
+	const hasIn = Object.prototype.hasOwnProperty.call(obj, 'in_template');
+	const hasUnused = Object.prototype.hasOwnProperty.call(obj, 'unused');
+	if (hasIn || hasUnused) {
+		return {
+			in_template: coerceFlatMap(obj['in_template']),
+			unused: coerceFlatMap(obj['unused']),
+		};
+	}
+	// Legacy bare-key shape — assume `in_template`.
+	return { in_template: coerceFlatMap(obj), unused: {} };
+}
+
+function coerceFlatMap(v: unknown): StringMap {
+	if (!v || typeof v !== 'object' || Array.isArray(v)) return {};
+	const out: StringMap = {};
+	for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+		if (typeof val === 'string') out[k] = val;
+		else if (val === null || val === undefined) out[k] = '';
+		else if (typeof val === 'number' || typeof val === 'boolean') out[k] = String(val);
 	}
 	return out;
 }
 
-/** Coerce the incoming `value` (object, JSON string, null) into a plain map. */
-function coerce(v: StringMap | string | null | undefined): StringMap {
-	if (v === null || v === undefined) return {};
-	if (typeof v === 'string') {
-		const trimmed = v.trim();
-		if (!trimmed) return {};
-		try {
-			const parsed: unknown = JSON.parse(trimmed);
-			if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-				return parsed as StringMap;
-			}
-		} catch {
-			return {};
-		}
-		return {};
-	}
-	if (typeof v === 'object' && !Array.isArray(v)) return { ...(v as StringMap) };
-	return {};
-}
-
 const view = ref<'form' | 'json'>('form');
-const local = ref<StringMap>(coerce(props.value));
-const jsonText = ref<string>(JSON.stringify(local.value, null, 2));
-const jsonError = ref<string | null>(null);
+const local = ref<I18nVariables>(coerce(props.value));
+const jsonTextIn = ref<string>(JSON.stringify(local.value.in_template, null, 2));
+const jsonTextUnused = ref<string>(JSON.stringify(local.value.unused, null, 2));
+const jsonErrorIn = ref<string | null>(null);
+const jsonErrorUnused = ref<string | null>(null);
 
-/** Refs to each visible textarea, keyed by variable name, for autogrow. */
+/**
+ * Newest broadcast we've already applied to local state. Compared
+ * against `at` on incoming broadcasts to dedupe (e.g. mount-time
+ * catch-up vs live event for the same broadcast).
+ */
+let lastAppliedAt: Date | null = null;
+
 const textareaRefs = ref<Record<string, HTMLTextAreaElement | null>>({});
-const jsonTextareaRef = ref<HTMLTextAreaElement | null>(null);
+const jsonInRef = ref<HTMLTextAreaElement | null>(null);
+const jsonUnusedRef = ref<HTMLTextAreaElement | null>(null);
 
 function autogrow(el: HTMLTextAreaElement | null | undefined): void {
 	if (!el) return;
-	// Skip when not yet laid out — ResizeObserver will retry once it is.
 	if (el.offsetParent === null && el.offsetHeight === 0) return;
-	// Reset first so shrinking works, then size to content.
 	el.style.height = 'auto';
 	el.style.height = `${el.scrollHeight}px`;
 }
 
-/** Resize all visible textareas (after a render or value change). */
 function autogrowAll(): void {
 	for (const el of Object.values(textareaRefs.value)) autogrow(el);
-	autogrow(jsonTextareaRef.value);
+	autogrow(jsonInRef.value);
+	autogrow(jsonUnusedRef.value);
 }
 
-/**
- * ResizeObserver + element registry: every observed textarea gets a
- * recomputed height whenever its own size changes (e.g. font load,
- * tab becoming visible, parent split-view animation finishing). This
- * is the robust fix for the on-load case where layout isn't ready
- * during onMounted.
- */
 const observed = new WeakSet<HTMLTextAreaElement>();
 let resizeObserver: ResizeObserver | null = null;
 
 function observe(el: HTMLTextAreaElement | null): void {
-	if (!el || observed.has(el)) return;
-	if (!resizeObserver) return;
+	if (!el || observed.has(el) || !resizeObserver) return;
 	resizeObserver.observe(el);
 	observed.add(el);
 }
@@ -140,30 +106,15 @@ watch(
 	() => props.value,
 	(next) => {
 		const incoming = coerce(next);
-		// eslint-disable-next-line no-console
-		console.groupCollapsed(`${LOG_TAG()} props.value changed`);
-		// eslint-disable-next-line no-console
-		console.log('incoming raw shape =', describe(next));
-		// eslint-disable-next-line no-console
-		console.log('incoming raw value =', next);
-		// eslint-disable-next-line no-console
-		console.log('after coerce =', incoming);
-		// eslint-disable-next-line no-console
-		console.log('current local =', local.value);
-		// Avoid stomping in-progress edits if the form value matches our local state.
 		if (JSON.stringify(incoming) !== JSON.stringify(local.value)) {
-			// eslint-disable-next-line no-console
-			console.log('=> ACCEPTED, replacing local');
+			dlog(`${LOG} props.value changed — replacing local`);
 			local.value = incoming;
-			jsonText.value = JSON.stringify(incoming, null, 2);
-			jsonError.value = null;
+			jsonTextIn.value = JSON.stringify(incoming.in_template, null, 2);
+			jsonTextUnused.value = JSON.stringify(incoming.unused, null, 2);
+			jsonErrorIn.value = null;
+			jsonErrorUnused.value = null;
 			void nextTick(autogrowAll);
-		} else {
-			// eslint-disable-next-line no-console
-			console.log('=> IGNORED (matches local)');
 		}
-		// eslint-disable-next-line no-console
-		console.groupEnd();
 	},
 	{ deep: true },
 );
@@ -172,124 +123,217 @@ watch(view, () => {
 	void nextTick(autogrowAll);
 });
 
-const sortedKeys = computed(() => Object.keys(local.value).sort((a, b) => a.localeCompare(b)));
-const isEmpty = computed(() => sortedKeys.value.length === 0);
+const sortedInKeys = computed(() =>
+	Object.keys(local.value.in_template).sort((a, b) => a.localeCompare(b)),
+);
+const sortedUnusedKeys = computed(() =>
+	Object.keys(local.value.unused).sort((a, b) => a.localeCompare(b)),
+);
+const isEmpty = computed(
+	() => sortedInKeys.value.length === 0 && sortedUnusedKeys.value.length === 0,
+);
 const toggleLabel = computed(() => (view.value === 'form' ? 'JSON' : 'Form'));
 const toggleIcon = computed(() => (view.value === 'form' ? 'data_object' : 'view_list'));
 
-function commit(next: StringMap): void {
+function commit(next: I18nVariables): void {
 	local.value = next;
-	jsonText.value = JSON.stringify(next, null, 2);
-	jsonError.value = null;
-	// eslint-disable-next-line no-console
-	console.log(`${LOG_TAG()} commit emit("input")`, next);
+	jsonTextIn.value = JSON.stringify(next.in_template, null, 2);
+	jsonTextUnused.value = JSON.stringify(next.unused, null, 2);
+	jsonErrorIn.value = null;
+	jsonErrorUnused.value = null;
+	dlog(`${LOG} commit emit("input")`, next);
 	emit('input', next);
 }
 
-function onValueInput(key: string, ev: Event): void {
+function onValueInput(section: Section, key: string, ev: Event): void {
 	const target = ev.target as HTMLTextAreaElement;
-	const next: StringMap = { ...local.value, [key]: target.value };
+	const sectionMap: StringMap = { ...local.value[section], [key]: target.value };
+	const next: I18nVariables =
+		section === 'in_template'
+			? { in_template: sectionMap, unused: { ...local.value.unused } }
+			: { in_template: { ...local.value.in_template }, unused: sectionMap };
 	local.value = next;
-	jsonText.value = JSON.stringify(next, null, 2);
-	jsonError.value = null;
-	// eslint-disable-next-line no-console
-	console.log(`${LOG_TAG()} onValueInput key="${key}" emit("input")`, next);
+	jsonTextIn.value = JSON.stringify(next.in_template, null, 2);
+	jsonTextUnused.value = JSON.stringify(next.unused, null, 2);
 	emit('input', next);
 	autogrow(target);
 }
 
-function onDelete(key: string): void {
+function onDelete(section: Section, key: string): void {
 	if (props.disabled) return;
-	const updated: StringMap = { ...local.value };
-	delete updated[key];
-	commit(updated);
+	const sectionMap: StringMap = { ...local.value[section] };
+	delete sectionMap[key];
+	const next: I18nVariables =
+		section === 'in_template'
+			? { in_template: sectionMap, unused: { ...local.value.unused } }
+			: { in_template: { ...local.value.in_template }, unused: sectionMap };
+	commit(next);
 	void nextTick(autogrowAll);
 }
 
-function onJsonInput(ev: Event): void {
+function onJsonInput(section: Section, ev: Event): void {
 	const target = ev.target as HTMLTextAreaElement;
 	const text = target.value;
-	jsonText.value = text;
+	if (section === 'in_template') jsonTextIn.value = text;
+	else jsonTextUnused.value = text;
 	autogrow(target);
 	const trimmed = text.trim();
+	const setError = (msg: string | null): void => {
+		if (section === 'in_template') jsonErrorIn.value = msg;
+		else jsonErrorUnused.value = msg;
+	};
 	if (!trimmed) {
-		jsonError.value = null;
-		local.value = {};
-		// eslint-disable-next-line no-console
-		console.log(`${LOG_TAG()} onJsonInput EMPTY emit("input") {}`);
-		emit('input', {});
+		setError(null);
+		const next: I18nVariables = {
+			in_template: section === 'in_template' ? {} : { ...local.value.in_template },
+			unused: section === 'unused' ? {} : { ...local.value.unused },
+		};
+		local.value = next;
+		emit('input', next);
 		return;
 	}
 	try {
 		const parsed: unknown = JSON.parse(trimmed);
 		if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-			jsonError.value = 'JSON must be an object of string values.';
+			setError('JSON must be an object of string values.');
 			return;
 		}
 		const obj = parsed as Record<string, unknown>;
 		const out: StringMap = {};
 		for (const [k, v] of Object.entries(obj)) {
 			if (typeof v !== 'string') {
-				jsonError.value = `Value for "${k}" must be a string.`;
+				setError(`Value for "${k}" must be a string.`);
 				return;
 			}
 			out[k] = v;
 		}
-		jsonError.value = null;
-		local.value = out;
-		// eslint-disable-next-line no-console
-		console.log(`${LOG_TAG()} onJsonInput parsed emit("input")`, out);
-		emit('input', out);
+		setError(null);
+		const next: I18nVariables = {
+			in_template: section === 'in_template' ? out : { ...local.value.in_template },
+			unused: section === 'unused' ? out : { ...local.value.unused },
+		};
+		local.value = next;
+		emit('input', next);
 	} catch (err) {
-		jsonError.value = err instanceof Error ? err.message : 'Invalid JSON.';
+		setError(err instanceof Error ? err.message : 'Invalid JSON.');
 	}
 }
 
 function isWarn(key: string): boolean {
-	if (props.variant !== 'active') return false;
-	const v = local.value[key];
+	const v = local.value.in_template[key];
 	return v === undefined || v === null || v.trim() === '';
 }
 
-function setTextareaRef(key: string, el: Element | null): void {
-	textareaRefs.value[key] = el as HTMLTextAreaElement | null;
+function setTextareaRef(section: Section, key: string, el: Element | null): void {
+	textareaRefs.value[`${section}::${key}`] = el as HTMLTextAreaElement | null;
 	observe(el as HTMLTextAreaElement | null);
 	autogrow(el as HTMLTextAreaElement | null);
 }
 
-function setJsonTextareaRef(el: Element | null): void {
-	jsonTextareaRef.value = el as HTMLTextAreaElement | null;
-	observe(el as HTMLTextAreaElement | null);
-	autogrow(el as HTMLTextAreaElement | null);
+function setJsonRef(section: Section, el: Element | null): void {
+	const ref = el as HTMLTextAreaElement | null;
+	if (section === 'in_template') jsonInRef.value = ref;
+	else jsonUnusedRef.value = ref;
+	observe(ref);
+	autogrow(ref);
 }
+
+/**
+ * Reclassify the current local value against a fresh set of keys
+ * referenced by the parent template body. Pure: returns a new
+ * `I18nVariables` plus a boolean indicating whether anything moved.
+ *
+ * Strict mode (no rename heuristics): a key in `in_template` that's
+ * no longer referenced moves to `unused` (value preserved); a key
+ * in `unused` that's now referenced moves to `in_template` (value
+ * preserved); a referenced key absent from both gets seeded in
+ * `in_template` with `''`.
+ */
+function reclassify(current: I18nVariables, keys: ReadonlySet<string>): {
+	next: I18nVariables;
+	changed: boolean;
+} {
+	const workIn: StringMap = { ...current.in_template };
+	const workUnused: StringMap = { ...current.unused };
+
+	for (const key of keys) {
+		if (!(key in workIn)) {
+			if (key in workUnused) {
+				workIn[key] = workUnused[key]!;
+				delete workUnused[key];
+			} else {
+				workIn[key] = '';
+			}
+		}
+	}
+	for (const key of Object.keys(workIn)) {
+		if (!keys.has(key)) {
+			workUnused[key] = workIn[key]!;
+			delete workIn[key];
+		}
+	}
+
+	const changed =
+		!shallowEqual(current.in_template, workIn) || !shallowEqual(current.unused, workUnused);
+	return { next: { in_template: workIn, unused: workUnused }, changed };
+}
+
+function shallowEqual(a: StringMap, b: StringMap): boolean {
+	const ak = Object.keys(a);
+	if (ak.length !== Object.keys(b).length) return false;
+	for (const k of ak) if (a[k] !== b[k]) return false;
+	return true;
+}
+
+function applyBroadcast(b: Broadcast): void {
+	if (lastAppliedAt && b.at.getTime() <= lastAppliedAt.getTime()) {
+		dlog(`${LOG} broadcast skipped (already applied at=${b.at.toISOString()})`);
+		return;
+	}
+	const { next, changed } = reclassify(local.value, b.keys);
+	lastAppliedAt = b.at;
+	if (!changed) {
+		dlog(`${LOG} broadcast applied — no change`);
+		return;
+	}
+	dlog(`${LOG} broadcast applied — emitting`, next);
+	commit(next);
+	void nextTick(autogrowAll);
+}
+
+let unsubBus: (() => void) | null = null;
 
 onMounted(() => {
-	// eslint-disable-next-line no-console
-	console.log(`${LOG_TAG()} mounted; initial props.value =`, describe(props.value));
+	dlog(`${LOG} mounted; initial value =`, props.value);
 	if (typeof ResizeObserver !== 'undefined') {
 		resizeObserver = new ResizeObserver((entries) => {
 			for (const entry of entries) autogrow(entry.target as HTMLTextAreaElement);
 		});
-		// Re-attach observers for any refs registered before mount.
 		for (const el of Object.values(textareaRefs.value)) observe(el);
-		observe(jsonTextareaRef.value);
+		observe(jsonInRef.value);
+		observe(jsonUnusedRef.value);
 	}
-	// One more pass once the browser has had a frame to compute layout —
-	// covers the case where textareas are inserted in a hidden tab or
-	// split-view that becomes visible after mount.
 	requestAnimationFrame(() => {
 		requestAnimationFrame(autogrowAll);
 	});
+	// Mount-time catch-up: if a Refresh broadcast fired before this
+	// language tab was opened, apply it now.
+	const last = getLastBroadcast();
+	if (last) applyBroadcast(last);
+	// Live subscription for subsequent broadcasts.
+	unsubBus = subscribe(applyBroadcast);
 });
 
 onBeforeUnmount(() => {
 	resizeObserver?.disconnect();
 	resizeObserver = null;
+	unsubBus?.();
+	unsubBus = null;
 });
 </script>
 
 <template>
-	<div class="i18n-strings-editor" :class="[`variant-${variant}`, { 'is-empty': isEmpty }]">
+	<div class="i18n-strings-editor" :class="{ 'is-empty': isEmpty }">
 		<div class="toolbar">
 			<span class="spacer" />
 			<v-button
@@ -303,64 +347,125 @@ onBeforeUnmount(() => {
 		</div>
 
 		<div v-if="view === 'form'" class="form-view">
-			<div v-if="isEmpty" class="empty">
-				<v-icon name="inbox" />
-				<span>{{
-					variant === 'unused' ? 'No unused variables.' : 'No variables yet.'
-				}}</span>
-			</div>
-			<div v-else class="rows">
-				<div
-					v-for="key in sortedKeys"
-					:key="key"
-					class="row"
-					:class="{ warn: isWarn(key) }">
-					<div class="key-bar">
-						<v-icon
-							v-if="isWarn(key)"
-							name="warning"
-							small
-							class="warn-icon"
-							v-tooltip="'Empty value — translation missing'" />
-						<code class="key-name">{{ key }}</code>
-						<span class="spacer" />
-						<v-button
-							v-if="variant === 'unused'"
-							icon
-							x-small
-							secondary
-							:disabled="disabled"
-							v-tooltip="'Remove this variable'"
-							@click="onDelete(key)">
-							<v-icon name="delete" small />
-						</v-button>
-					</div>
-					<textarea
-						class="value-textarea"
-						:ref="(el) => setTextareaRef(key, el as Element | null)"
-						:value="local[key] ?? ''"
-						:disabled="disabled"
-						:placeholder="isWarn(key) ? 'Missing translation…' : ''"
-						rows="1"
-						@input="onValueInput(key, $event)" />
+			<!-- In-Template section -->
+			<section class="section">
+				<header class="section-header">
+					<v-icon name="list_alt" small />
+					<span>In template</span>
+					<span class="count">{{ sortedInKeys.length }}</span>
+				</header>
+				<div v-if="sortedInKeys.length === 0" class="empty">
+					<v-icon name="inbox" />
+					<span>No variables referenced by the template body yet.</span>
 				</div>
-			</div>
+				<div v-else class="rows">
+					<div
+						v-for="key in sortedInKeys"
+						:key="`in::${key}`"
+						class="row"
+						:class="{ warn: isWarn(key) }">
+						<div class="key-bar">
+							<v-icon
+								v-if="isWarn(key)"
+								name="warning"
+								small
+								class="warn-icon"
+								v-tooltip="'Empty value — translation missing'" />
+							<code class="key-name">{{ key }}</code>
+							<span class="spacer" />
+						</div>
+						<textarea
+							class="value-textarea"
+							:ref="(el) => setTextareaRef('in_template', key, el as Element | null)"
+							:value="local.in_template[key] ?? ''"
+							:disabled="disabled"
+							:placeholder="isWarn(key) ? 'Missing translation…' : ''"
+							rows="1"
+							@input="onValueInput('in_template', key, $event)" />
+					</div>
+				</div>
+			</section>
+
+			<!-- Unused section -->
+			<section class="section">
+				<header class="section-header">
+					<v-icon name="archive" small />
+					<span>Unused</span>
+					<span class="count">{{ sortedUnusedKeys.length }}</span>
+				</header>
+				<div v-if="sortedUnusedKeys.length === 0" class="empty">
+					<v-icon name="check_circle" />
+					<span>No unused variables.</span>
+				</div>
+				<div v-else class="rows">
+					<div
+						v-for="key in sortedUnusedKeys"
+						:key="`unused::${key}`"
+						class="row">
+						<div class="key-bar">
+							<code class="key-name">{{ key }}</code>
+							<span class="spacer" />
+							<v-button
+								icon
+								x-small
+								secondary
+								:disabled="disabled"
+								v-tooltip="'Remove this variable'"
+								@click="onDelete('unused', key)">
+								<v-icon name="delete" small />
+							</v-button>
+						</div>
+						<textarea
+							class="value-textarea"
+							:ref="(el) => setTextareaRef('unused', key, el as Element | null)"
+							:value="local.unused[key] ?? ''"
+							:disabled="disabled"
+							rows="1"
+							@input="onValueInput('unused', key, $event)" />
+					</div>
+				</div>
+			</section>
 		</div>
 
 		<div v-else class="json-view">
-			<textarea
-				class="value-textarea json-area"
-				:ref="(el) => setJsonTextareaRef(el as Element | null)"
-				:value="jsonText"
-				:disabled="disabled"
-				placeholder="{}"
-				spellcheck="false"
-				rows="3"
-				@input="onJsonInput($event)" />
-			<div v-if="jsonError" class="json-error">
-				<v-icon name="error" small />
-				<span>{{ jsonError }}</span>
-			</div>
+			<section class="section">
+				<header class="section-header">
+					<v-icon name="list_alt" small />
+					<span>In template</span>
+				</header>
+				<textarea
+					class="value-textarea json-area"
+					:ref="(el) => setJsonRef('in_template', el as Element | null)"
+					:value="jsonTextIn"
+					:disabled="disabled"
+					placeholder="{}"
+					spellcheck="false"
+					rows="3"
+					@input="onJsonInput('in_template', $event)" />
+				<div v-if="jsonErrorIn" class="json-error">
+					<v-icon name="error" small />
+					<span>{{ jsonErrorIn }}</span>
+				</div>
+			</section>
+			<section class="section">
+				<header class="section-header">
+					<v-icon name="archive" small />
+					<span>Unused</span>
+				</header>
+				<textarea
+					class="value-textarea json-area"
+					:ref="(el) => setJsonRef('unused', el as Element | null)"
+					:value="jsonTextUnused"
+					:disabled="disabled"
+					placeholder="{}"
+					spellcheck="false"
+					rows="3"
+					@input="onJsonInput('unused', $event)" />
+				<div v-if="jsonErrorUnused" class="json-error">
+					<v-icon name="error" small />
+					<span>{{ jsonErrorUnused }}</span>
+				</div>
+			</section>
 		</div>
 	</div>
 </template>
@@ -369,7 +474,7 @@ onBeforeUnmount(() => {
 .i18n-strings-editor {
 	display: flex;
 	flex-direction: column;
-	gap: 8px;
+	gap: 12px;
 }
 
 .toolbar {
@@ -383,11 +488,45 @@ onBeforeUnmount(() => {
 	flex: 1 1 auto;
 }
 
+.form-view,
+.json-view {
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+}
+
+.section {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.section-header {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	font-size: 12px;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	color: var(--theme--foreground-subdued, var(--foreground-subdued));
+}
+
+.section-header .count {
+	margin-left: 4px;
+	padding: 1px 6px;
+	border-radius: 999px;
+	background: var(--theme--background-subdued, var(--background-subdued));
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0;
+}
+
 .empty {
 	display: flex;
 	align-items: center;
 	gap: 8px;
-	padding: 16px;
+	padding: 12px 16px;
 	color: var(--theme--foreground-subdued, var(--foreground-subdued));
 	border: 1px dashed var(--theme--border-color-subdued, var(--border-subdued));
 	border-radius: var(--theme--border-radius, 6px);
@@ -475,12 +614,6 @@ onBeforeUnmount(() => {
 	font-family: var(--theme--font-family-monospace, monospace);
 	font-size: 13px;
 	min-height: 80px;
-}
-
-.json-view {
-	display: flex;
-	flex-direction: column;
-	gap: 6px;
 }
 
 .json-error {

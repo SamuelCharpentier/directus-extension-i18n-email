@@ -1,88 +1,114 @@
 import type { ExtensionsServices, SchemaOverview } from '@directus/types';
-import type { EmailTemplateTranslationRow, Logger, TranslationStrings } from './types';
+import type {
+	EmailTemplateTranslationRow,
+	I18nVariables,
+	Logger,
+	TranslationStrings,
+} from './types';
 import { TEMPLATES_COLLECTION, TRANSLATIONS_COLLECTION } from './constants';
 import { extractI18nKeys } from './liquid';
 
 export type ReconcileResult = {
-	i18n_variables: TranslationStrings;
-	unused_i18n_variables: TranslationStrings;
+	value: I18nVariables;
 	changed: boolean;
 };
 
 /**
- * Pure reconciliation between a translation row's stored maps and the
- * set of `i18n.*` keys actually referenced by the current template
- * body.
+ * Pure reconciliation between a translation row's stored variables map
+ * and the set of `i18n.*` keys actually referenced by the current
+ * template body.
  *
  * Rules:
- *   - Keys in `usedKeys` missing from `i18n_variables`: added with value `""`.
- *     If the same key already lives in `unused_i18n_variables`, its previous
- *     value is restored (so toggling a variable in/out of the body is
- *     non-destructive).
- *   - Keys in `i18n_variables` absent from `usedKeys`: moved into
- *     `unused_i18n_variables` with their value preserved.
- *   - Keys in `unused_i18n_variables` that are also in `usedKeys`: removed
- *     from `unused_i18n_variables` (they're now active and live in `i18n_variables`).
+ *   - Keys in `usedKeys` missing from `in_template`: added with value `""`.
+ *     If the same key already lives in `unused`, its previous value is
+ *     restored (toggling a variable in/out of the body is non-destructive).
+ *   - Keys in `in_template` absent from `usedKeys`: moved into `unused`
+ *     with their value preserved.
+ *   - Keys in `unused` that are also in `usedKeys`: promoted into
+ *     `in_template`.
  *   - Operation is idempotent: running it twice yields the same result
  *     and reports `changed: false` on the second pass.
  */
 export function reconcileTranslationStrings(
-	currentActive: TranslationStrings | null | undefined,
-	currentUnused: TranslationStrings | null | undefined,
+	currentValue: I18nVariables | TranslationStrings | string | null | undefined,
 	usedKeys: ReadonlySet<string>,
 ): ReconcileResult {
-	// Directus's ItemsService can hand back JSON-typed columns either as a
-	// parsed object OR as a raw JSON string (driver- and version-dependent).
-	// `{...someString}` char-spreads it into `{0:"{",1:'"',...}`, which then
-	// gets demoted wholesale into `unused_i18n_variables` on the next pass —
-	// the source of every "character soup" report. Coerce defensively.
-	const active: TranslationStrings = coerceMap(currentActive);
-	const unused: TranslationStrings = coerceMap(currentUnused);
+	const baseline = coerceI18nVariables(currentValue);
 
-	// Re-baseline the change check against the *coerced* originals so a
-	// string→object normalization doesn't get reported as a real change.
-	const baselineActive = active;
-	const baselineUnused = unused;
-	const workActive: TranslationStrings = { ...baselineActive };
-	const workUnused: TranslationStrings = { ...baselineUnused };
+	const workIn: TranslationStrings = { ...baseline.in_template };
+	const workUnused: TranslationStrings = { ...baseline.unused };
 
-	// Promote unused → active when the body references them again.
+	// Promote unused → in_template when the body references them again.
 	for (const key of usedKeys) {
-		if (!(key in workActive)) {
+		if (!(key in workIn)) {
 			if (key in workUnused) {
-				workActive[key] = workUnused[key]!;
+				workIn[key] = workUnused[key]!;
 				delete workUnused[key];
 			} else {
-				workActive[key] = '';
+				workIn[key] = '';
 			}
 		}
 	}
 
-	// Demote active → unused when the body no longer references them.
-	for (const key of Object.keys(workActive)) {
+	// Demote in_template → unused when the body no longer references them.
+	for (const key of Object.keys(workIn)) {
 		if (!usedKeys.has(key)) {
-			workUnused[key] = workActive[key]!;
-			delete workActive[key];
+			workUnused[key] = workIn[key]!;
+			delete workIn[key];
 		}
 	}
 
 	const changed =
-		!shallowStringEqual(baselineActive, workActive) ||
-		!shallowStringEqual(baselineUnused, workUnused);
+		!shallowStringEqual(baseline.in_template, workIn) ||
+		!shallowStringEqual(baseline.unused, workUnused);
 	return {
-		i18n_variables: workActive,
-		unused_i18n_variables: workUnused,
+		value: { in_template: workIn, unused: workUnused },
 		changed,
 	};
 }
 
 /**
- * Coerce a value that *should* be a `TranslationStrings` object but might
- * arrive as a JSON-encoded string (depending on DB driver / Directus version).
- * Returns a fresh, plain object with only string values. Anything else (array,
- * boxed primitive, malformed) collapses to `{}`.
+ * Coerce any plausibly-stored value into the canonical `I18nVariables`
+ * shape. Handles:
+ *   - `null` / `undefined` → empty.
+ *   - JSON-encoded string of either shape (some DB drivers return this).
+ *   - New shape `{ in_template, unused }` (passed through).
+ *   - Legacy bare-key shape `{ key: 'value', ... }` (treated as `in_template`).
+ *   - Malformed (array, primitive, mixed) → empty.
  */
-function coerceMap(v: TranslationStrings | string | null | undefined): TranslationStrings {
+export function coerceI18nVariables(
+	v: I18nVariables | TranslationStrings | string | null | undefined,
+): I18nVariables {
+	if (v === null || v === undefined) return { in_template: {}, unused: {} };
+	if (typeof v === 'string') {
+		const trimmed = v.trim();
+		if (!trimmed) return { in_template: {}, unused: {} };
+		try {
+			const parsed: unknown = JSON.parse(trimmed);
+			if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+				return coerceI18nVariables(parsed as I18nVariables | TranslationStrings);
+			}
+		} catch {
+			/* fall through */
+		}
+		return { in_template: {}, unused: {} };
+	}
+	if (typeof v !== 'object' || Array.isArray(v)) return { in_template: {}, unused: {} };
+
+	const obj = v as Record<string, unknown>;
+	const hasIn = Object.prototype.hasOwnProperty.call(obj, 'in_template');
+	const hasUnused = Object.prototype.hasOwnProperty.call(obj, 'unused');
+	if (hasIn || hasUnused) {
+		return {
+			in_template: coerceFlatMap(obj['in_template']),
+			unused: coerceFlatMap(obj['unused']),
+		};
+	}
+	// Legacy bare-key shape — assume everything is `in_template`.
+	return { in_template: coerceFlatMap(obj), unused: {} };
+}
+
+function coerceFlatMap(v: unknown): TranslationStrings {
 	if (v === null || v === undefined) return {};
 	if (typeof v === 'string') {
 		const trimmed = v.trim();
@@ -90,7 +116,7 @@ function coerceMap(v: TranslationStrings | string | null | undefined): Translati
 		try {
 			const parsed: unknown = JSON.parse(trimmed);
 			if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-				return coerceMap(parsed as TranslationStrings);
+				return coerceFlatMap(parsed);
 			}
 		} catch {
 			/* fall through */
@@ -98,12 +124,13 @@ function coerceMap(v: TranslationStrings | string | null | undefined): Translati
 		return {};
 	}
 	if (typeof v !== 'object' || Array.isArray(v)) return {};
-	if (v instanceof String || v instanceof Number || v instanceof Boolean) return {};
 	const out: TranslationStrings = {};
-	for (const [k, val] of Object.entries(v)) {
+	for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
 		if (typeof val === 'string') out[k] = val;
 		else if (val === null || val === undefined) out[k] = '';
-		else out[k] = String(val);
+		else if (typeof val === 'number' || typeof val === 'boolean') out[k] = String(val);
+		// Drop nested objects/arrays silently — they shouldn't appear in a flat
+		// translation map and forcing String() would produce "[object Object]".
 	}
 	return out;
 }
@@ -118,26 +145,25 @@ function shallowStringEqual(a: TranslationStrings, b: TranslationStrings): boole
 }
 
 /**
- * Build a starter `i18n_variables` map for a brand-new translation row. Every
- * key referenced by the template body gets an empty string. Used by
- * the `email_template_translations.items.create` filter so admins
- * land on a populated form instead of an empty `{}`.
+ * Build a starter `i18n_variables` value for a brand-new translation row.
+ * Every key referenced by the template body lands in `in_template` with
+ * an empty string. `unused` starts empty.
  */
 export function buildInitialStrings(
 	templateBody: string,
 	templateKey: string,
 	logger: Pick<Logger, 'warn'>,
-): TranslationStrings {
+): I18nVariables {
 	const used = extractI18nKeys(templateBody, templateKey, logger);
-	const out: TranslationStrings = {};
-	for (const key of used) out[key] = '';
-	return out;
+	const in_template: TranslationStrings = {};
+	for (const key of used) in_template[key] = '';
+	return { in_template, unused: {} };
 }
 
 /**
  * Walk every translation row attached to a template and reconcile its
- * `i18n_variables` / `unused_i18n_variables` against the body. Only writes
- * rows that actually changed.
+ * `i18n_variables` against the body. Only writes rows that actually
+ * changed.
  */
 export async function reconcileTranslationsForTemplate(
 	template: { id?: string; template_key: string; body: string },
@@ -171,17 +197,10 @@ export async function reconcileTranslationsForTemplate(
 
 	let updated = 0;
 	for (const row of rows) {
-		const result = reconcileTranslationStrings(
-			row.i18n_variables,
-			row.unused_i18n_variables,
-			usedKeys,
-		);
+		const result = reconcileTranslationStrings(row.i18n_variables, usedKeys);
 		if (!result.changed) continue;
 		try {
-			await items.updateOne(row.id!, {
-				i18n_variables: result.i18n_variables,
-				unused_i18n_variables: result.unused_i18n_variables,
-			});
+			await items.updateOne(row.id!, { i18n_variables: result.value });
 			updated += 1;
 		} catch (err) {
 			logger.warn(

@@ -277,30 +277,14 @@ export const EMAIL_TEMPLATE_TRANSLATIONS_COLLECTION: CollectionPayload = {
 			type: 'json',
 			meta: {
 				interface: 'i18n-strings-editor',
-				options: { variant: 'active' },
-				note: 'Active i18n variables referenced by the template body. Auto-reconciled on body save.',
+				note: 'i18n variables — auto-reconciled. `in_template` are referenced by the body; `unused` are kept for re-use.',
 				translations: [
 					{ language: 'en-US', translation: 'i18n_variables' },
 					{ language: 'fr-FR', translation: 'i18n_variables' },
 				],
 				width: 'full',
 			},
-			schema: { is_nullable: false, default_value: '{}' },
-		},
-		{
-			field: 'unused_i18n_variables',
-			type: 'json',
-			meta: {
-				interface: 'i18n-strings-editor',
-				options: { variant: 'unused' },
-				note: 'Variables stored in this row that are no longer referenced by the template body. Edit the value, or click delete to remove an entry.',
-				translations: [
-					{ language: 'en-US', translation: 'unused_i18n_variables' },
-					{ language: 'fr-FR', translation: 'unused_i18n_variables' },
-				],
-				width: 'full',
-			},
-			schema: { is_nullable: false, default_value: '{}' },
+			schema: { is_nullable: false, default_value: '{"in_template":{},"unused":{}}' },
 		},
 	],
 };

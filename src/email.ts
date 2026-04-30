@@ -1,5 +1,6 @@
 import type { EmailOptions } from '@directus/types';
 import type { EmailTemplateTranslationRow, RecipientUser, TranslationStrings } from './types';
+import { coerceI18nVariables } from './reconcile';
 
 const EMAIL_ADDRESS_PATTERN = /<([^>]+)>$/;
 
@@ -36,7 +37,7 @@ export type ApplyTranslationInput = {
  */
 export function applyTranslationsToEmail(email: EmailOptions, input: ApplyTranslationInput): void {
 	const { translation, baseStrings, fallbackFromName, fromEnv, recipientUser } = input;
-	const strings = translation?.i18n_variables ?? {};
+	const strings = coerceI18nVariables(translation?.i18n_variables ?? null).in_template;
 
 	if (translation?.subject) {
 		email.subject = translation.subject;

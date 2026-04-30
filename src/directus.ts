@@ -11,6 +11,7 @@ import type {
 	EmailTemplateVariableRow,
 	RecipientUser,
 } from './types';
+import { coerceI18nVariables } from './reconcile';
 
 function normaliseLang(lang: unknown): string | null {
 	return typeof lang === 'string' && lang.length > 0 ? lang : null;
@@ -163,12 +164,8 @@ export async function fetchTranslationRow(
 function isUsableTranslation(t: EmailTemplateTranslationRow | null): boolean {
 	if (!t) return false;
 	const hasSubject = typeof t.subject === 'string' && t.subject.length > 0;
-	const i18nVars = t.i18n_variables;
-	const hasStrings =
-		i18nVars !== null &&
-		i18nVars !== undefined &&
-		typeof i18nVars === 'object' &&
-		Object.keys(i18nVars).length > 0;
+	const { in_template } = coerceI18nVariables(t.i18n_variables);
+	const hasStrings = Object.keys(in_template).length > 0;
 	return hasSubject || hasStrings;
 }
 

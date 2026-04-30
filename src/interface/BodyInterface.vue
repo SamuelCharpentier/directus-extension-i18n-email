@@ -11,6 +11,8 @@
  * actually lives.
  */
 
+import { dlog } from './debug';
+
 const props = withDefaults(
 	defineProps<{
 		value: string | null | undefined;
@@ -33,14 +35,12 @@ const LOG = '[i18n-email/body]';
 function dispatchSnapshot(body: string | null): void {
 	if (typeof window === 'undefined') return;
 	const detail = { body: typeof body === 'string' ? body : '' };
-	// eslint-disable-next-line no-console
-	console.log(`${LOG} dispatch i18n-email:body-snapshot len=${detail.body.length}`);
+	dlog(`${LOG} dispatch i18n-email:body-snapshot len=${detail.body.length}`);
 	window.dispatchEvent(new CustomEvent('i18n-email:body-snapshot', { detail }));
 }
 
 function onInput(next: string | null): void {
-	// eslint-disable-next-line no-console
-	console.log(
+	dlog(
 		`${LOG} onInput typeof=${typeof next} len=${typeof next === 'string' ? next.length : '-'}`,
 	);
 	emit('input', next);
@@ -59,8 +59,7 @@ function resolvedLineNumber(): boolean {
 function onFocusOut(): void {
 	if (typeof window === 'undefined') return;
 	const body = typeof props.value === 'string' ? props.value : '';
-	// eslint-disable-next-line no-console
-	console.log(`${LOG} dispatch i18n-email:body-blur len=${body.length}`);
+	dlog(`${LOG} dispatch i18n-email:body-blur len=${body.length}`);
 	window.dispatchEvent(new CustomEvent('i18n-email:body-blur', { detail: { body } }));
 }
 </script>
