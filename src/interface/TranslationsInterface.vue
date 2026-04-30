@@ -101,30 +101,35 @@ function broadcastFromBody(reason: 'manual' | 'blur'): void {
 
 /**
  * Pull a fresh body snapshot from `BodyInterface` before broadcasting.
- * Avoids the first-load bug where `lastBody` is `''` (no prior input
- * events) and the Refresh broadcast empties every language tab's
- * `in_template`. Resolves on first matching `body-snapshot` or after
- * a short timeout (in which case we proceed with whatever `lastBody`
- * currently holds — preserves prior behavior if no `BodyInterface`
- * is mounted, e.g. admin swapped the body field's interface).
+ * Refresh always asks for the current body and waits for the reply,
+ * so we never extract keys from a stale `lastBody`. Rejects on
+ * timeout (e.g. admin swapped the body field's interface away from
+ * `body-i18n-aware`); the caller surfaces that as a refresh error
+ * rather than silently broadcasting an empty key set and demoting
+ * every `in_template` entry to `unused`.
  */
-function awaitFreshBody(timeoutMs = 50): Promise<void> {
+function awaitFreshBody(timeoutMs = 1000): Promise<void> {
 	if (typeof window === 'undefined') return Promise.resolve();
-	return new Promise<void>((resolve) => {
+	return new Promise<void>((resolve, reject) => {
 		let done = false;
-		const settle = (): void => {
-			if (done) return;
-			done = true;
+		const cleanup = (): void => {
 			window.removeEventListener('i18n-email:body-snapshot', listener);
 			clearTimeout(timer);
-			resolve();
 		};
 		const listener = (ev: Event): void => {
+			if (done) return;
+			done = true;
 			const detail = (ev as CustomEvent<{ body?: string }>).detail;
 			if (typeof detail?.body === 'string') lastBody.value = detail.body;
-			settle();
+			cleanup();
+			resolve();
 		};
-		const timer = window.setTimeout(settle, timeoutMs);
+		const timer = window.setTimeout(() => {
+			if (done) return;
+			done = true;
+			cleanup();
+			reject(new Error('No body interface responded — configure the body field to use the i18n-aware body interface.'));
+		}, timeoutMs);
 		window.addEventListener('i18n-email:body-snapshot', listener);
 		window.dispatchEvent(new CustomEvent('i18n-email:body-request'));
 	});
