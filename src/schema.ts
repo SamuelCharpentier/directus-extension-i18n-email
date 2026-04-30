@@ -399,6 +399,11 @@ export const EMAIL_EXTENSION_USER_PREFS_COLLECTION: CollectionPayload = {
 			type: 'boolean',
 			meta: {
 				interface: 'boolean',
+				// `cast-boolean` makes Directus normalise SQLite's 0/1
+				// integer storage to true/false on read; without it the
+				// admin boolean toggle renders unchecked even when the
+				// stored value is truthy.
+				special: ['cast-boolean'],
 				note: 'Automatically rebuild the i18n variables list when the body field loses focus.',
 				width: 'full',
 			},

@@ -69,6 +69,7 @@ const api = useApi();
 
 const userId = ref<string | null>(null);
 const autoRefresh = ref(false);
+const prefRowExists = ref(false);
 const refreshing = ref(false);
 const refreshError = ref<string | null>(null);
 const lastSummary = ref<string | null>(null);
@@ -113,16 +114,34 @@ function onClickRefresh(): void {
 async function onToggleAutoRefresh(next: boolean): Promise<void> {
 	autoRefresh.value = next;
 	if (!userId.value) return;
-	try {
-		await api.patch(`/items/email_extension_user_prefs/${userId.value}`, {
-			auto_refresh_i18n_on_body_change: next,
-		});
-	} catch {
+	// SQLite returns booleans as 0/1 ints, and Directus 11's PATCH on a
+	// missing item silently returns 204 rather than 404. We track row
+	// existence explicitly so each toggle issues exactly one request:
+	// POST when the row hasn't been created yet, PATCH thereafter.
+	if (prefRowExists.value) {
 		try {
-			await api.post('/items/email_extension_user_prefs', {
-				user: userId.value,
+			await api.patch(`/items/email_extension_user_prefs/${userId.value}`, {
 				auto_refresh_i18n_on_body_change: next,
 			});
+		} catch {
+			// Best-effort: pref not persisted, but in-session toggle still works.
+		}
+		return;
+	}
+	try {
+		await api.post('/items/email_extension_user_prefs', {
+			user: userId.value,
+			auto_refresh_i18n_on_body_change: next,
+		});
+		prefRowExists.value = true;
+	} catch {
+		// Row likely already exists from a concurrent toggle / earlier
+		// session; fall back to PATCH and remember it for next time.
+		try {
+			await api.patch(`/items/email_extension_user_prefs/${userId.value}`, {
+				auto_refresh_i18n_on_body_change: next,
+			});
+			prefRowExists.value = true;
 		} catch {
 			// Best-effort: pref not persisted, but in-session toggle still works.
 		}
@@ -158,7 +177,12 @@ onMounted(async () => {
 			const pref = await api
 				.get(`/items/email_extension_user_prefs/${userId.value}`)
 				.catch(() => null);
-			autoRefresh.value = pref?.data?.data?.auto_refresh_i18n_on_body_change === true;
+			const row = pref?.data?.data;
+			if (row) {
+				prefRowExists.value = true;
+				// SQLite returns booleans as 0/1 integers; coerce loosely.
+				autoRefresh.value = Boolean(row.auto_refresh_i18n_on_body_change);
+			}
 		}
 	} catch {
 		// User store not reachable — auto-refresh stays off.

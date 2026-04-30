@@ -38,9 +38,7 @@ export function getLastBroadcast(): Broadcast | null {
 export function dispatchReconcile(keys: Iterable<string>): void {
 	if (typeof window === 'undefined') return;
 	const arr = Array.from(keys);
-	window.dispatchEvent(
-		new CustomEvent(EVENT_NAME, { detail: { keys: arr, at: new Date() } }),
-	);
+	window.dispatchEvent(new CustomEvent(EVENT_NAME, { detail: { keys: arr, at: new Date() } }));
 }
 
 /**
@@ -60,7 +58,9 @@ export function subscribe(handler: (b: Broadcast) => void): () => void {
 function readDetail(ev: Event): Broadcast | null {
 	const detail = (ev as CustomEvent<{ keys?: unknown; at?: unknown }>).detail;
 	if (!detail) return null;
-	const keysArr = Array.isArray(detail.keys) ? detail.keys.filter((k) => typeof k === 'string') : [];
+	const keysArr = Array.isArray(detail.keys)
+		? detail.keys.filter((k) => typeof k === 'string')
+		: [];
 	const at = detail.at instanceof Date ? detail.at : new Date();
 	return { keys: new Set<string>(keysArr as string[]), at };
 }
