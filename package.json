@@ -53,7 +53,7 @@
 			{
 				"type": "interface",
 				"name": "i18n-strings-editor",
-				"source": "src/interface/index.ts"
+				"source": "src/interface/strings-index.ts"
 			},
 			{
 				"type": "interface",

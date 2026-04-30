@@ -1,11 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
 
 // Mock the .vue SFC import so Vitest can resolve it without @vitejs/plugin-vue.
-vi.mock('../src/interface/Interface.vue', () => ({
+vi.mock('../src/interface/StringsInterface.vue', () => ({
 	default: { name: 'I18nStringsEditorInterface' },
 }));
 
-import interfaceConfig from '../src/interface/index';
+import interfaceConfig from '../src/interface/strings-index';
 
 describe('interface entry', () => {
 	it('exports a defineInterface config with expected shape', () => {

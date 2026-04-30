@@ -1,5 +1,5 @@
 import { defineInterface } from '@directus/extensions-sdk';
-import InterfaceComponent from './Interface.vue';
+import StringsInterfaceComponent from './StringsInterface.vue';
 
 /**
  * Custom interface for the JSON `i18n_variables` and `unused_i18n_variables` fields on
@@ -12,7 +12,7 @@ export default defineInterface({
 	name: 'i18n Strings Editor',
 	icon: 'translate',
 	description: 'Per-key textarea editor for i18n translation maps with a JSON fallback view.',
-	component: InterfaceComponent,
+	component: StringsInterfaceComponent,
 	types: ['json'],
 	options: [
 		{
