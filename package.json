@@ -59,6 +59,11 @@
 				"type": "interface",
 				"name": "body-i18n-aware",
 				"source": "src/interface/body-index.ts"
+			},
+			{
+				"type": "interface",
+				"name": "translations-i18n-aware",
+				"source": "src/interface/translations-index.ts"
 			}
 		],
 		"host": "11.17.2"

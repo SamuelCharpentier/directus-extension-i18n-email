@@ -73,7 +73,7 @@ describe('schema', () => {
 		expect(fields.some((f) => f.field === 'body' && f.type === 'text')).toBe(true);
 		const alias = fields.find((f) => f.field === 'translations');
 		expect(alias?.type).toBe('alias');
-		expect((alias?.meta as any)?.interface).toBe('translations');
+		expect((alias?.meta as any)?.interface).toBe('translations-i18n-aware');
 		expect((alias?.meta as any)?.special).toContain('translations');
 	});
 	it('defines relations for translations', () => {

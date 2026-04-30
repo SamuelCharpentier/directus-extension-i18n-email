@@ -180,7 +180,7 @@ export const EMAIL_TEMPLATES_COLLECTION: CollectionPayload = {
 			field: 'translations',
 			type: 'alias',
 			meta: {
-				interface: 'translations',
+				interface: 'translations-i18n-aware',
 				special: ['translations'],
 				options: {
 					languageField: 'name',
