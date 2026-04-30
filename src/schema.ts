@@ -298,13 +298,6 @@ export const EMAIL_TEMPLATE_TRANSLATIONS_COLLECTION: CollectionPayload = {
 					{ language: 'en-US', translation: 'Unused Variables' },
 					{ language: 'fr-FR', translation: 'Variables inutilisées' },
 				],
-				conditions: [
-					{
-						name: 'hide-when-empty',
-						rule: { unused_i18n_variables: { _in: [null, '{}', ''] } },
-						hidden: true,
-					},
-				],
 				width: 'full',
 			},
 			schema: { is_nullable: false, default_value: '{}' },

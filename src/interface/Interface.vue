@@ -178,6 +178,8 @@ const userId = ref<string | null>(null);
 const autoRefresh = ref(false);
 const refreshing = ref(false);
 const refreshError = ref<string | null>(null);
+/** When true, the next body-blur event is honoured even if auto-refresh is off. */
+const expectingManualBlur = ref(false);
 
 const isActive = computed(() => props.variant === 'active');
 
@@ -196,34 +198,49 @@ function doRefreshFromBody(body: string): void {
 	void nextTick(autogrowAll);
 }
 
-async function onClickRefresh(): Promise<void> {
+function onClickRefresh(): void {
 	if (!isActive.value || refreshing.value || props.disabled) return;
 	refreshing.value = true;
 	refreshError.value = null;
+	expectingManualBlur.value = true;
+	const myTemplateId = formValues?.value?.email_templates_id as string | number | undefined;
 	try {
-		const tmplId = formValues?.value?.email_templates_id as string | number | undefined;
-		if (!tmplId) {
-			refreshError.value = 'No template id available yet (save the row first).';
-			return;
-		}
-		const res = await api.get(`/items/email_templates/${tmplId}`, {
-			params: { fields: 'body' },
-		});
-		const body = (res?.data?.data?.body as string | null | undefined) ?? '';
-		doRefreshFromBody(body);
+		// Ask the body wrapper to re-emit its blur event with the *current*
+		// in-form body — which includes any unsaved edits the user just made.
+		window.dispatchEvent(
+			new CustomEvent('i18n-email:request-body-blur', {
+				detail: { templateId: myTemplateId ?? null },
+			}),
+		);
 	} catch (err) {
 		refreshError.value = err instanceof Error ? err.message : 'Refresh failed.';
-	} finally {
-		refreshing.value = false;
 	}
+	// If no body wrapper responds within a short window, surface a friendly
+	// message and clear the spinner.
+	const armed = expectingManualBlur.value;
+	window.setTimeout(() => {
+		if (armed && expectingManualBlur.value) {
+			expectingManualBlur.value = false;
+			refreshing.value = false;
+			refreshError.value =
+				'No body field responded — make sure the body uses the i18n-aware interface.';
+		}
+	}, 250);
 }
 
 function onBodyBlurEvent(ev: Event): void {
-	if (!isActive.value || !autoRefresh.value) return;
+	if (!isActive.value) return;
 	const detail = (ev as CustomEvent<{ templateId?: unknown; body?: unknown }>).detail ?? {};
 	const myTemplateId = formValues?.value?.email_templates_id as string | number | undefined;
 	if (myTemplateId && detail.templateId && myTemplateId !== detail.templateId) return;
+	const manual = expectingManualBlur.value;
+	if (!autoRefresh.value && !manual) return;
 	doRefreshFromBody(typeof detail.body === 'string' ? detail.body : '');
+	if (manual) {
+		expectingManualBlur.value = false;
+		refreshing.value = false;
+		refreshError.value = null;
+	}
 }
 
 async function onToggleAutoRefresh(next: boolean): Promise<void> {
