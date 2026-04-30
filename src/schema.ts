@@ -276,7 +276,7 @@ export const EMAIL_TEMPLATE_TRANSLATIONS_COLLECTION: CollectionPayload = {
 			type: 'json',
 			meta: {
 				interface: 'i18n-strings-editor',
-				options: { mode: 'form', unusedFieldName: 'unused_strings' },
+				options: { variant: 'active' },
 				note: 'Active i18n variables referenced by the template body. Auto-reconciled on body save.',
 				translations: [
 					{ language: 'en-US', translation: 'i18n Variables' },
@@ -291,14 +291,13 @@ export const EMAIL_TEMPLATE_TRANSLATIONS_COLLECTION: CollectionPayload = {
 			type: 'json',
 			meta: {
 				interface: 'i18n-strings-editor',
-				options: { mode: 'form', unusedFieldName: '' },
-				note: 'Variables stored in this row that are no longer referenced by the template body. Editable; deletable from the i18n Variables editor on the `strings` field.',
+				options: { variant: 'unused' },
+				note: 'Variables stored in this row that are no longer referenced by the template body. Edit the value, or click delete to remove an entry.',
 				translations: [
 					{ language: 'en-US', translation: 'Unused Variables' },
 					{ language: 'fr-FR', translation: 'Variables inutilisées' },
 				],
 				width: 'full',
-				hidden: true,
 			},
 			schema: { is_nullable: false, default_value: '{}' },
 		},
