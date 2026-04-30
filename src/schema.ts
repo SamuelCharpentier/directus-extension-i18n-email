@@ -280,8 +280,8 @@ export const EMAIL_TEMPLATE_TRANSLATIONS_COLLECTION: CollectionPayload = {
 				options: { variant: 'active' },
 				note: 'Active i18n variables referenced by the template body. Auto-reconciled on body save.',
 				translations: [
-					{ language: 'en-US', translation: 'i18n Variables' },
-					{ language: 'fr-FR', translation: 'Variables i18n' },
+					{ language: 'en-US', translation: 'i18n_variables' },
+					{ language: 'fr-FR', translation: 'i18n_variables' },
 				],
 				width: 'full',
 			},
@@ -295,8 +295,8 @@ export const EMAIL_TEMPLATE_TRANSLATIONS_COLLECTION: CollectionPayload = {
 				options: { variant: 'unused' },
 				note: 'Variables stored in this row that are no longer referenced by the template body. Edit the value, or click delete to remove an entry.',
 				translations: [
-					{ language: 'en-US', translation: 'Unused Variables' },
-					{ language: 'fr-FR', translation: 'Variables inutilisées' },
+					{ language: 'en-US', translation: 'unused_i18n_variables' },
+					{ language: 'fr-FR', translation: 'unused_i18n_variables' },
 				],
 				width: 'full',
 			},

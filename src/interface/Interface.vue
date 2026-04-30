@@ -1,8 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue';
-import { useApi } from '@directus/extensions-sdk';
-import { extractI18nKeys } from '../liquid';
-import { reconcileTranslationStrings } from '../reconcile';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 type StringMap = Record<string, string>;
 
@@ -54,6 +51,8 @@ const jsonTextareaRef = ref<HTMLTextAreaElement | null>(null);
 
 function autogrow(el: HTMLTextAreaElement | null | undefined): void {
 	if (!el) return;
+	// Skip when not yet laid out — ResizeObserver will retry once it is.
+	if (el.offsetParent === null && el.offsetHeight === 0) return;
 	// Reset first so shrinking works, then size to content.
 	el.style.height = 'auto';
 	el.style.height = `${el.scrollHeight}px`;
@@ -63,6 +62,23 @@ function autogrow(el: HTMLTextAreaElement | null | undefined): void {
 function autogrowAll(): void {
 	for (const el of Object.values(textareaRefs.value)) autogrow(el);
 	autogrow(jsonTextareaRef.value);
+}
+
+/**
+ * ResizeObserver + element registry: every observed textarea gets a
+ * recomputed height whenever its own size changes (e.g. font load,
+ * tab becoming visible, parent split-view animation finishing). This
+ * is the robust fix for the on-load case where layout isn't ready
+ * during onMounted.
+ */
+const observed = new WeakSet<HTMLTextAreaElement>();
+let resizeObserver: ResizeObserver | null = null;
+
+function observe(el: HTMLTextAreaElement | null): void {
+	if (!el || observed.has(el)) return;
+	if (!resizeObserver) return;
+	resizeObserver.observe(el);
+	observed.add(el);
 }
 
 watch(
@@ -157,131 +173,36 @@ function isWarn(key: string): boolean {
 
 function setTextareaRef(key: string, el: Element | null): void {
 	textareaRefs.value[key] = el as HTMLTextAreaElement | null;
+	observe(el as HTMLTextAreaElement | null);
 	autogrow(el as HTMLTextAreaElement | null);
 }
 
 function setJsonTextareaRef(el: Element | null): void {
 	jsonTextareaRef.value = el as HTMLTextAreaElement | null;
+	observe(el as HTMLTextAreaElement | null);
 	autogrow(el as HTMLTextAreaElement | null);
 }
 
-// ─────────────────── live refresh from body ───────────────────
-// Only the active-variant editor offers "Refresh from body". The
-// refresh stays UI-only (form-state) and never persists until the
-// user hits Directus's native Save.
-const api = useApi();
-const formValues = inject<Ref<Record<string, unknown>> | null>('values', null);
-type SetFieldValue = (field: string, value: unknown) => void;
-const setFieldValue = inject<SetFieldValue | null>('setFieldValue', null);
-
-const userId = ref<string | null>(null);
-const autoRefresh = ref(false);
-const refreshing = ref(false);
-const refreshError = ref<string | null>(null);
-/** When true, the next body-blur event is honoured even if auto-refresh is off. */
-const expectingManualBlur = ref(false);
-
-const isActive = computed(() => props.variant === 'active');
-
-const noopWarn = { warn: (): void => {} };
-
-function doRefreshFromBody(body: string): void {
-	const keys = extractI18nKeys(body ?? '', 'interface-refresh', noopWarn);
-	const currentUnused = (formValues?.value?.unused_i18n_variables as StringMap | undefined) ?? {};
-	const result = reconcileTranslationStrings(local.value, currentUnused, keys);
-	if (JSON.stringify(result.i18n_variables) !== JSON.stringify(local.value)) {
-		commit(result.i18n_variables);
-	}
-	if (typeof setFieldValue === 'function') {
-		setFieldValue('unused_i18n_variables', result.unused_i18n_variables);
-	}
-	void nextTick(autogrowAll);
-}
-
-function onClickRefresh(): void {
-	if (!isActive.value || refreshing.value || props.disabled) return;
-	refreshing.value = true;
-	refreshError.value = null;
-	expectingManualBlur.value = true;
-	const myTemplateId = formValues?.value?.email_templates_id as string | number | undefined;
-	try {
-		// Ask the body wrapper to re-emit its blur event with the *current*
-		// in-form body — which includes any unsaved edits the user just made.
-		window.dispatchEvent(
-			new CustomEvent('i18n-email:request-body-blur', {
-				detail: { templateId: myTemplateId ?? null },
-			}),
-		);
-	} catch (err) {
-		refreshError.value = err instanceof Error ? err.message : 'Refresh failed.';
-	}
-	// If no body wrapper responds within a short window, surface a friendly
-	// message and clear the spinner.
-	const armed = expectingManualBlur.value;
-	window.setTimeout(() => {
-		if (armed && expectingManualBlur.value) {
-			expectingManualBlur.value = false;
-			refreshing.value = false;
-			refreshError.value =
-				'No body field responded — make sure the body uses the i18n-aware interface.';
-		}
-	}, 250);
-}
-
-function onBodyBlurEvent(ev: Event): void {
-	if (!isActive.value) return;
-	const detail = (ev as CustomEvent<{ templateId?: unknown; body?: unknown }>).detail ?? {};
-	const myTemplateId = formValues?.value?.email_templates_id as string | number | undefined;
-	if (myTemplateId && detail.templateId && myTemplateId !== detail.templateId) return;
-	const manual = expectingManualBlur.value;
-	if (!autoRefresh.value && !manual) return;
-	doRefreshFromBody(typeof detail.body === 'string' ? detail.body : '');
-	if (manual) {
-		expectingManualBlur.value = false;
-		refreshing.value = false;
-		refreshError.value = null;
-	}
-}
-
-async function onToggleAutoRefresh(next: boolean): Promise<void> {
-	autoRefresh.value = next;
-	if (!userId.value) return;
-	try {
-		await api.patch(`/items/email_extension_user_prefs/${userId.value}`, {
-			auto_refresh_i18n_on_body_change: next,
+onMounted(() => {
+	if (typeof ResizeObserver !== 'undefined') {
+		resizeObserver = new ResizeObserver((entries) => {
+			for (const entry of entries) autogrow(entry.target as HTMLTextAreaElement);
 		});
-	} catch {
-		try {
-			await api.post('/items/email_extension_user_prefs', {
-				user: userId.value,
-				auto_refresh_i18n_on_body_change: next,
-			});
-		} catch {
-			// Best-effort: pref not persisted, but in-session toggle still works.
-		}
+		// Re-attach observers for any refs registered before mount.
+		for (const el of Object.values(textareaRefs.value)) observe(el);
+		observe(jsonTextareaRef.value);
 	}
-}
-
-onMounted(async () => {
-	if (!isActive.value) return;
-	try {
-		const me = await api.get('/users/me', { params: { fields: 'id' } });
-		userId.value = (me?.data?.data?.id as string | undefined) ?? null;
-		if (userId.value) {
-			const pref = await api
-				.get(`/items/email_extension_user_prefs/${userId.value}`)
-				.catch(() => null);
-			autoRefresh.value =
-				pref?.data?.data?.auto_refresh_i18n_on_body_change === true;
-		}
-	} catch {
-		// User store not reachable — auto-refresh stays off.
-	}
-	window.addEventListener('i18n-email:body-blur', onBodyBlurEvent);
+	// One more pass once the browser has had a frame to compute layout —
+	// covers the case where textareas are inserted in a hidden tab or
+	// split-view that becomes visible after mount.
+	requestAnimationFrame(() => {
+		requestAnimationFrame(autogrowAll);
+	});
 });
 
 onBeforeUnmount(() => {
-	window.removeEventListener('i18n-email:body-blur', onBodyBlurEvent);
+	resizeObserver?.disconnect();
+	resizeObserver = null;
 });
 </script>
 
@@ -290,26 +211,6 @@ onBeforeUnmount(() => {
 		class="i18n-strings-editor"
 		:class="[`variant-${variant}`, { 'is-empty': isEmpty }]">
 		<div class="toolbar">
-			<v-button
-				v-if="isActive"
-				small
-				secondary
-				:loading="refreshing"
-				:disabled="disabled || refreshing"
-				v-tooltip="'Re-extract i18n.* keys from the current body. UI only — does not save.'"
-				@click="onClickRefresh">
-				<v-icon name="refresh" left small />
-				Refresh from body
-			</v-button>
-			<label v-if="isActive" class="auto-refresh">
-				<v-checkbox
-					:model-value="autoRefresh"
-					:disabled="disabled"
-					@update:model-value="onToggleAutoRefresh" />
-				<span v-tooltip="'When on, the variables list rebuilds whenever the body field loses focus.'">
-					Auto on body blur
-				</span>
-			</label>
 			<span class="spacer" />
 			<v-button
 				small
@@ -319,10 +220,6 @@ onBeforeUnmount(() => {
 				<v-icon :name="toggleIcon" left small />
 				{{ toggleLabel }}
 			</v-button>
-		</div>
-		<div v-if="refreshError" class="json-error">
-			<v-icon name="error" small />
-			<span>{{ refreshError }}</span>
 		</div>
 
 		<div v-if="view === 'form'" class="form-view">
@@ -404,16 +301,6 @@ onBeforeUnmount(() => {
 
 .toolbar .spacer {
 	flex: 1 1 auto;
-}
-
-.auto-refresh {
-	display: inline-flex;
-	align-items: center;
-	gap: 4px;
-	font-size: 13px;
-	color: var(--theme--foreground-subdued, var(--foreground-subdued));
-	cursor: pointer;
-	user-select: none;
 }
 
 .empty {

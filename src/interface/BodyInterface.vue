@@ -1,20 +1,33 @@
 <script setup lang="ts">
-import { inject, onBeforeUnmount, onMounted, ref, type Ref } from 'vue';
+import { computed, inject, onMounted, ref, watch, type Ref } from 'vue';
+import { useApi } from '@directus/extensions-sdk';
+import { extractI18nKeys } from '../liquid';
+import { reconcileTranslationStrings } from '../reconcile';
 
 /**
- * Thin wrapper around Directus's standard `input-code` interface that
- * dispatches a window-level CustomEvent when the body field loses
- * focus. Listened to by `i18n-strings-editor` (variant=active) when
- * the user has opted into auto-refresh — lets the i18n variables list
- * stay in sync with the body without leaving the form.
+ * Wrapper around Directus's standard `input-code` interface used on
+ * `email_templates.body`. Owns the i18n-variables refresh UX:
  *
- * Also listens for `i18n-email:request-body-blur` so the variables
- * editor's manual "Refresh from body" button can pull the *current,
- * unsaved* body value from the live form rather than the DB.
+ *   - "Refresh from body" button reconciles every translation row's
+ *     `i18n_variables` / `unused_i18n_variables` against the current
+ *     in-form body (across all languages, including ones that aren't
+ *     currently mounted in the translations split-view).
+ *   - "Auto on body blur" checkbox (per-user pref, persisted to
+ *     `email_extension_user_prefs`) runs the same reconciliation on
+ *     focus-out of the body field.
  *
- * Forwards all input events transparently and never mutates the value
- * itself, so Directus's dirty-state tracking remains intact.
+ * Both paths write to `values.translations` via `setFieldValue` —
+ * UI-only, never persisted until the user hits Directus's Save.
  */
+
+type StringMap = Record<string, string>;
+type TranslationRow = {
+	id?: string | number;
+	languages_code?: string;
+	i18n_variables?: StringMap | null;
+	unused_i18n_variables?: StringMap | null;
+	[k: string]: unknown;
+};
 
 const props = withDefaults(
 	defineProps<{
@@ -33,60 +46,171 @@ const emit = defineEmits<{
 	(e: 'input', value: string | null): void;
 }>();
 
+const api = useApi();
 const formValues = inject<Ref<Record<string, unknown>> | null>('values', null);
+type SetFieldValue = (field: string, value: unknown) => void;
+const setFieldValue = inject<SetFieldValue | null>('setFieldValue', null);
 
-const root = ref<HTMLElement | null>(null);
+const userId = ref<string | null>(null);
+const autoRefresh = ref(false);
+const refreshing = ref(false);
+const refreshError = ref<string | null>(null);
+const lastSummary = ref<string | null>(null);
 
-function dispatchBlur(): void {
-	const id =
-		(formValues?.value?.id as string | number | undefined) ??
-		(formValues?.value?.template_key as string | undefined) ??
-		null;
-	const detail = {
-		templateId: id,
-		body: typeof props.value === 'string' ? props.value : '',
-	};
-	try {
-		window.dispatchEvent(new CustomEvent('i18n-email:body-blur', { detail }));
-	} catch {
-		// Swallow — running outside a window context shouldn't crash the form.
-	}
-}
+const noopWarn = { warn: (): void => {} };
 
-function onFocusOut(): void {
-	dispatchBlur();
-}
-
-function onRequestBlur(ev: Event): void {
-	// Honour optional templateId scoping so a request from one form
-	// doesn't trigger blurs on every body wrapper on the page.
-	const detail = (ev as CustomEvent<{ templateId?: unknown }>).detail ?? {};
-	const myId =
-		(formValues?.value?.id as string | number | undefined) ??
-		(formValues?.value?.template_key as string | undefined) ??
-		null;
-	if (detail.templateId && myId && detail.templateId !== myId) return;
-	dispatchBlur();
-}
+const canWrite = computed(() => typeof setFieldValue === 'function');
 
 function onInput(next: string | null): void {
 	emit('input', next);
 }
 
-onMounted(() => {
-	window.addEventListener('i18n-email:request-body-blur', onRequestBlur);
-});
+/**
+ * Walk every translation row attached to this template form and
+ * reconcile its i18n maps against the current body. Returns the
+ * updated array plus the count of changed rows.
+ */
+function reconcileAll(body: string): { rows: TranslationRow[]; changed: number } {
+	const keys = extractI18nKeys(body ?? '', 'body-interface-refresh', noopWarn);
+	const incoming = (formValues?.value?.translations as unknown) ?? [];
+	const arr: TranslationRow[] = Array.isArray(incoming)
+		? (incoming as TranslationRow[])
+		: [];
+	let changed = 0;
+	const out: TranslationRow[] = arr.map((row) => {
+		const result = reconcileTranslationStrings(
+			(row.i18n_variables as StringMap | null | undefined) ?? {},
+			(row.unused_i18n_variables as StringMap | null | undefined) ?? {},
+			keys,
+		);
+		if (!result.changed) return row;
+		changed += 1;
+		return {
+			...row,
+			i18n_variables: result.i18n_variables,
+			unused_i18n_variables: result.unused_i18n_variables,
+		};
+	});
+	return { rows: out, changed };
+}
 
-onBeforeUnmount(() => {
-	window.removeEventListener('i18n-email:request-body-blur', onRequestBlur);
+function refreshNow(reason: 'manual' | 'blur'): void {
+	if (props.disabled) return;
+	refreshError.value = null;
+	if (!canWrite.value) {
+		if (reason === 'manual') {
+			refreshError.value = 'Cannot update translations from this scope.';
+		}
+		return;
+	}
+	const body = typeof props.value === 'string' ? props.value : '';
+	const { rows, changed } = reconcileAll(body);
+	setFieldValue!('translations', rows);
+	if (reason === 'manual') {
+		lastSummary.value =
+			changed === 0
+				? 'Already in sync — nothing to update.'
+				: `Updated ${changed} translation${changed === 1 ? '' : 's'}.`;
+	} else {
+		lastSummary.value = null;
+	}
+}
+
+function onClickRefresh(): void {
+	if (refreshing.value) return;
+	refreshing.value = true;
+	try {
+		refreshNow('manual');
+	} catch (err) {
+		refreshError.value = err instanceof Error ? err.message : 'Refresh failed.';
+	} finally {
+		refreshing.value = false;
+	}
+}
+
+function onFocusOut(): void {
+	if (!autoRefresh.value) return;
+	try {
+		refreshNow('blur');
+	} catch {
+		// Best-effort; never block typing.
+	}
+}
+
+async function onToggleAutoRefresh(next: boolean): Promise<void> {
+	autoRefresh.value = next;
+	if (!userId.value) return;
+	try {
+		await api.patch(`/items/email_extension_user_prefs/${userId.value}`, {
+			auto_refresh_i18n_on_body_change: next,
+		});
+	} catch {
+		try {
+			await api.post('/items/email_extension_user_prefs', {
+				user: userId.value,
+				auto_refresh_i18n_on_body_change: next,
+			});
+		} catch {
+			// Best-effort: pref not persisted, but in-session toggle still works.
+		}
+	}
+}
+
+// Clear the manual summary when the body changes — keeps the message
+// honest (it described a previous reconciliation).
+watch(
+	() => props.value,
+	() => {
+		lastSummary.value = null;
+	},
+);
+
+onMounted(async () => {
+	try {
+		const me = await api.get('/users/me', { params: { fields: 'id' } });
+		userId.value = (me?.data?.data?.id as string | undefined) ?? null;
+		if (userId.value) {
+			const pref = await api
+				.get(`/items/email_extension_user_prefs/${userId.value}`)
+				.catch(() => null);
+			autoRefresh.value =
+				pref?.data?.data?.auto_refresh_i18n_on_body_change === true;
+		}
+	} catch {
+		// User store not reachable — auto-refresh stays off.
+	}
 });
 </script>
 
 <template>
-	<div
-		ref="root"
-		class="body-i18n-aware"
-		@focusout="onFocusOut">
+	<div class="body-i18n-aware" @focusout="onFocusOut">
+		<div class="i18n-toolbar">
+			<v-button
+				small
+				secondary
+				:loading="refreshing"
+				:disabled="disabled || refreshing || !canWrite"
+				v-tooltip="'Re-extract i18n.* keys from the body and reconcile every translation. UI only — does not save.'"
+				@click="onClickRefresh">
+				<v-icon name="refresh" left small />
+				Refresh i18n variables from body
+			</v-button>
+			<label class="auto-refresh">
+				<v-checkbox
+					:model-value="autoRefresh"
+					:disabled="disabled"
+					@update:model-value="onToggleAutoRefresh" />
+				<span v-tooltip="'When on, every translation row is reconciled whenever the body loses focus.'">
+					Auto on body blur
+				</span>
+			</label>
+			<span class="spacer" />
+			<span v-if="lastSummary" class="summary">{{ lastSummary }}</span>
+		</div>
+		<div v-if="refreshError" class="refresh-error">
+			<v-icon name="error" small />
+			<span>{{ refreshError }}</span>
+		</div>
 		<interface-input-code
 			:value="value"
 			:disabled="disabled"
@@ -98,6 +222,42 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .body-i18n-aware {
-	display: contents;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.i18n-toolbar {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	flex-wrap: wrap;
+}
+
+.i18n-toolbar .spacer {
+	flex: 1 1 auto;
+}
+
+.auto-refresh {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	font-size: 13px;
+	color: var(--theme--foreground-subdued, var(--foreground-subdued));
+	cursor: pointer;
+	user-select: none;
+}
+
+.summary {
+	font-size: 12px;
+	color: var(--theme--foreground-subdued, var(--foreground-subdued));
+}
+
+.refresh-error {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	color: var(--theme--danger, #e35168);
+	font-size: 13px;
 }
 </style>
