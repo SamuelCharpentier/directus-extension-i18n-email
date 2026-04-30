@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, inject, onBeforeUnmount, onMounted, ref, type Ref } from 'vue';
 import { useApi } from '@directus/extensions-sdk';
 import { extractI18nKeys } from '../liquid';
 import { dlog } from './debug';
@@ -79,11 +79,20 @@ const lastSummary = ref<string | null>(null);
  * base-vs-non-base branching: the `base` layout's body references
  * `i18n.base.*` (so the row's stored map is keyed without the
  * `base.` prefix), while every other template uses bare `i18n.*`
- * paths. Resolved once on mount via the API; falls back to an
- * empty string (treated as non-base) if the lookup fails or this
- * is a brand-new unsaved row.
+ * paths.
+ *
+ * Sourced primarily from Directus's injected `values` ref (the
+ * parent edit form's live record). Falls back to a one-shot API
+ * fetch when `values` isn't available (e.g. running outside the
+ * standard form layout) or the field hasn't been merged in yet.
  */
-const templateKey = ref<string>('');
+const formValues = inject<Ref<Record<string, unknown>> | undefined>('values', undefined);
+const apiTemplateKey = ref<string>('');
+const templateKey = computed<string>(() => {
+	const fromForm = formValues?.value?.template_key;
+	if (typeof fromForm === 'string' && fromForm.length > 0) return fromForm;
+	return apiTemplateKey.value;
+});
 
 /**
  * Latest body string we've seen via `i18n-email:body-snapshot`. If
@@ -99,7 +108,9 @@ const LOG = '[i18n-email/translations]';
 function broadcastFromBody(reason: 'manual' | 'blur'): void {
 	if (props.disabled) return;
 	refreshError.value = null;
-	const keys = extractI18nKeys(lastBody.value, templateKey.value, noopWarn);
+	const tk = templateKey.value;
+	dlog(`${LOG} ${reason} extract: templateKey="${tk}" bodyLen=${lastBody.value.length}`);
+	const keys = extractI18nKeys(lastBody.value, tk, noopWarn);
 	dlog(`${LOG} ${reason} broadcast: ${keys.size} key(s)`, Array.from(keys));
 	dispatchReconcile(keys);
 	if (reason === 'manual') {
@@ -139,7 +150,11 @@ function awaitFreshBody(timeoutMs = 1000): Promise<void> {
 			if (done) return;
 			done = true;
 			cleanup();
-			reject(new Error('No body interface responded — configure the body field to use the i18n-aware body interface.'));
+			reject(
+				new Error(
+					'No body interface responded — configure the body field to use the i18n-aware body interface.',
+				),
+			);
 		}, timeoutMs);
 		window.addEventListener('i18n-email:body-snapshot', listener);
 		window.dispatchEvent(new CustomEvent('i18n-email:body-request'));
@@ -218,11 +233,14 @@ onMounted(async () => {
 		window.addEventListener('i18n-email:body-snapshot', onBodySnapshot);
 		window.addEventListener('i18n-email:body-blur', onBodyBlur);
 	}
-	// Resolve template_key for base-vs-non-base key extraction. Done
-	// once on mount: the field is the row's natural key and never
-	// changes after creation. New unsaved rows have no primaryKey
-	// yet, in which case we leave templateKey empty (non-base path).
+	// Resolve template_key for base-vs-non-base key extraction. The
+	// computed `templateKey` prefers the injected `values` ref (live
+	// form state); this API fetch is the fallback for cases where
+	// `values` is empty or absent. Done once on mount: the field is
+	// the row's natural key and never changes after creation. New
+	// unsaved rows have no primaryKey yet, so we skip.
 	if (
+		!templateKey.value &&
 		props.collection &&
 		props.primaryKey !== undefined &&
 		props.primaryKey !== null &&
@@ -234,10 +252,13 @@ onMounted(async () => {
 				{ params: { fields: 'template_key' } },
 			);
 			const key = row?.data?.data?.template_key;
-			if (typeof key === 'string') templateKey.value = key;
-		} catch {
-			// Best-effort: stay on the non-base path.
+			if (typeof key === 'string') apiTemplateKey.value = key;
+			dlog(`${LOG} api template_key="${apiTemplateKey.value}"`);
+		} catch (err) {
+			dlog(`${LOG} api template_key fetch failed`, err);
 		}
+	} else {
+		dlog(`${LOG} templateKey from values="${templateKey.value}"`);
 	}
 	try {
 		const me = await api.get('/users/me', { params: { fields: 'id' } });
