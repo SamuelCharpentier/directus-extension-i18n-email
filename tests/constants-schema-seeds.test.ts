@@ -16,6 +16,7 @@ import {
 	EMAIL_TEMPLATE_TRANSLATIONS_COLLECTION,
 	EMAIL_TEMPLATE_VARIABLES_COLLECTION,
 	EMAIL_TEMPLATE_SYNC_AUDIT_COLLECTION,
+	EMAIL_EXTENSION_USER_PREFS_COLLECTION,
 } from '../src/schema';
 import {
 	SEED_TEMPLATES,
@@ -48,6 +49,18 @@ describe('schema', () => {
 		expect(ALL_COLLECTIONS[2]).toBe(EMAIL_TEMPLATE_TRANSLATIONS_COLLECTION);
 		expect(ALL_COLLECTIONS).toContain(EMAIL_TEMPLATE_VARIABLES_COLLECTION);
 		expect(ALL_COLLECTIONS).toContain(EMAIL_TEMPLATE_SYNC_AUDIT_COLLECTION);
+		expect(ALL_COLLECTIONS).toContain(EMAIL_EXTENSION_USER_PREFS_COLLECTION);
+	});
+	it('user-prefs collection is hidden, keyed by user uuid, with auto-refresh boolean default false', () => {
+		expect(EMAIL_EXTENSION_USER_PREFS_COLLECTION.collection).toBe('email_extension_user_prefs');
+		expect((EMAIL_EXTENSION_USER_PREFS_COLLECTION.meta as any)?.hidden).toBe(true);
+		const fields = EMAIL_EXTENSION_USER_PREFS_COLLECTION.fields;
+		const userField = fields.find((f) => f.field === 'user');
+		expect(userField?.type).toBe('uuid');
+		expect((userField?.schema as any)?.is_primary_key).toBe(true);
+		const flag = fields.find((f) => f.field === 'auto_refresh_i18n_on_body_change');
+		expect(flag?.type).toBe('boolean');
+		expect((flag?.schema as any)?.default_value).toBe(false);
 	});
 	it('languages collection has `code` (system-language) + auto-populated `name`', () => {
 		const fields = LANGUAGES_COLLECTION_PAYLOAD.fields;
