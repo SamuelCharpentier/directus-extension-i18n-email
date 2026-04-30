@@ -36,7 +36,7 @@ export type ApplyTranslationInput = {
  */
 export function applyTranslationsToEmail(email: EmailOptions, input: ApplyTranslationInput): void {
 	const { translation, baseStrings, fallbackFromName, fromEnv, recipientUser } = input;
-	const strings = translation?.strings ?? {};
+	const strings = translation?.i18n_variables ?? {};
 
 	if (translation?.subject) {
 		email.subject = translation.subject;

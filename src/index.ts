@@ -28,7 +28,10 @@ function templatesPathFromEnv(env: Record<string, unknown>): string {
 		: '';
 }
 
-const hook: HookConfig = ({ filter, action, init }, { services, logger, getSchema, env }) => {
+const hook: HookConfig = (
+	{ filter, action, init },
+	{ services, logger, getSchema, env, database },
+) => {
 	logger.info('[i18n-email] Hook registered.');
 
 	// Bootstrap is intentionally fire-and-forget so it does NOT block
@@ -39,7 +42,7 @@ const hook: HookConfig = ({ filter, action, init }, { services, logger, getSchem
 	// `runBootstrap` promise (it coalesces concurrent calls) and
 	// returns immediately. Errors are logged inside runBootstrap.
 	const kickBootstrap = (): void => {
-		void runBootstrap(templatesPathFromEnv(env), services, getSchema, env, logger);
+		void runBootstrap(templatesPathFromEnv(env), services, getSchema, env, logger, database);
 	};
 
 	if (typeof init === 'function') {
@@ -147,7 +150,7 @@ const hook: HookConfig = ({ filter, action, init }, { services, logger, getSchem
 		return patch;
 	});
 
-	// ──────────── Pre-fill `strings` on translation create ────────────
+	// ──────────── Pre-fill `i18n_variables` on translation create ────────────
 	// When an admin adds a new language for an existing template, derive
 	// the empty key map from the parent body so the UI lands on a fully
 	// scaffolded form. Existing values supplied in the create payload
@@ -157,22 +160,24 @@ const hook: HookConfig = ({ filter, action, init }, { services, logger, getSchem
 		const parentId = row.email_templates_id;
 		if (!parentId) return row;
 		const hasStrings =
-			row.strings && typeof row.strings === 'object' && Object.keys(row.strings).length > 0;
+			row.i18n_variables &&
+			typeof row.i18n_variables === 'object' &&
+			Object.keys(row.i18n_variables).length > 0;
 		if (hasStrings) {
-			if (!row.unused_strings) row.unused_strings = {};
+			if (!row.unused_i18n_variables) row.unused_i18n_variables = {};
 			return row;
 		}
 		try {
 			const schema = await getSchema();
 			const tpl = await fetchTemplateBodyById(String(parentId), services, schema, logger);
 			if (tpl) {
-				row.strings = buildInitialStrings(tpl.body, tpl.template_key, logger);
+				row.i18n_variables = buildInitialStrings(tpl.body, tpl.template_key, logger);
 			}
 		} catch (err) {
 			logger.warn(`[i18n-email] Translation pre-fill skipped: ${(err as Error).message}`);
 		}
-		if (!row.strings) row.strings = {};
-		if (!row.unused_strings) row.unused_strings = {};
+		if (!row.i18n_variables) row.i18n_variables = {};
+		if (!row.unused_i18n_variables) row.unused_i18n_variables = {};
 		return row;
 	});
 

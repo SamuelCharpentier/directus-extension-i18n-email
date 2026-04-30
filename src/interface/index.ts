@@ -2,10 +2,10 @@ import { defineInterface } from '@directus/extensions-sdk';
 import InterfaceComponent from './Interface.vue';
 
 /**
- * Custom interface for the JSON `strings` and `unused_strings` fields on
+ * Custom interface for the JSON `i18n_variables` and `unused_i18n_variables` fields on
  * `email_template_translations`. Renders one `v-textarea` per key with a
  * Form ⇄ JSON view toggle. The `variant` option controls whether the editor
- * shows delete buttons (used on the `unused_strings` field).
+ * shows delete buttons (used on the `unused_i18n_variables` field).
  */
 export default defineInterface({
 	id: 'i18n-strings-editor',

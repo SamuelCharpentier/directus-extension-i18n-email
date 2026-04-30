@@ -180,7 +180,7 @@ One row per `(email_templates_id, languages_code)` pair, edited through the pare
 | `languages_code`     | string  | FK → `languages.code` (cascade delete)                                                          |
 | `subject`            | string? | Email subject. Empty for the `base` layout. Liquid-rendered before send.                        |
 | `from_name`          | string? | Sender display-name override for this language. Liquid-rendered before send.                    |
-| `strings`            | json    | Flat key → string map exposed to Liquid as `i18n.*`. Each value is Liquid-rendered before send. |
+| `i18n_variables`     | json    | Flat key → string map exposed to Liquid as `i18n.*`. Each value is Liquid-rendered before send. |
 
 ### `email_template_variables`
 
@@ -235,7 +235,7 @@ Translation `subject`, `from_name`, and every value inside `strings` are themsel
 | -------------------------------------- | ------------------------------- | --------------- |
 | `subject`                              | `Bonjour {{ user.first_name }}` | `Bonjour Marie` |
 | `from_name`                            | `{{ projectName }} Support`     | `Acme Support`  |
-| `strings.greeting`                     | `Hello, {{ user.first_name }}!` | `Hello, John!`  |
+| `i18n_variables.greeting`              | `Hello, {{ user.first_name }}!` | `Hello, John!`  |
 
 The rendered `subject` overrides the email's subject; the rendered `from_name` overrides the sender display-name; rendered `strings` are exposed to the body as `{{ i18n.* }}`. If a value contains no Liquid tokens it's used as-is. If Liquid parsing fails for a value, the raw string is used and a warning is logged — a bad translation never aborts the send.
 

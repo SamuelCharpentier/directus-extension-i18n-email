@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtemp, readFile, rm, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -219,14 +219,14 @@ describe('runBootstrap', () => {
 			(r: any) => r.languages_code === 'fr-FR',
 		);
 		expect(frBaseRow.subject).toBe('');
-		expect(frBaseRow.strings).toEqual({});
+		expect(frBaseRow.i18n_variables).toEqual({});
 		const enBaseRow = s._stores.email_template_translations!.find(
 			(r: any) =>
 				r.languages_code === 'en-US' &&
 				r.email_templates_id === frBaseRow.email_templates_id,
 		);
 		expect(enBaseRow.from_name).toBe('Your Organization');
-		expect(enBaseRow.strings.org_name).toBe('Your Organization');
+		expect(enBaseRow.i18n_variables.org_name).toBe('Your Organization');
 	});
 
 	it('skips re-seeding variables that already exist', async () => {
@@ -273,7 +273,7 @@ describe('runBootstrap', () => {
 							languages_code: 'en-US',
 							subject: '',
 							from_name: 'pre-seeded',
-							strings: { footer_note: 'pre-seeded' },
+							i18n_variables: { footer_note: 'pre-seeded' },
 						},
 					],
 				},
@@ -535,6 +535,159 @@ describe('runBootstrap', () => {
 			expect(logger.warn).toHaveBeenCalledWith(
 				expect.stringContaining('stale directus_relations row'),
 			);
+		});
+	});
+
+	describe('legacy column rename migration', () => {
+		function makeDb() {
+			const renames: Array<{ table: string; old: string; new: string }> = [];
+			const hasColumn = vi.fn(async (_table: string, _col: string) => true);
+			const alterTable = vi.fn(async (table: string, cb: (t: any) => void) => {
+				cb({
+					renameColumn: (oldName: string, newName: string) => {
+						renames.push({ table, old: oldName, new: newName });
+					},
+				});
+			});
+			return {
+				database: { schema: { hasColumn, alterTable } },
+				renames,
+				hasColumn,
+				alterTable,
+			};
+		}
+
+		it('renames legacy strings/unused_strings columns and deletes old field rows', async () => {
+			const s = makeServices({
+				items: {
+					directus_fields: {
+						rows: [
+							{
+								id: 'f-1',
+								collection: 'email_template_translations',
+								field: 'strings',
+							},
+							{
+								id: 'f-2',
+								collection: 'email_template_translations',
+								field: 'unused_strings',
+							},
+						],
+					},
+				},
+			});
+			const logger = makeLogger();
+			const { database, renames, alterTable } = makeDb();
+			await runBootstrap(dir, s as any, getSchema, {}, logger, database);
+			expect(alterTable).toHaveBeenCalledTimes(2);
+			expect(renames).toEqual([
+				{
+					table: 'email_template_translations',
+					old: 'strings',
+					new: 'i18n_variables',
+				},
+				{
+					table: 'email_template_translations',
+					old: 'unused_strings',
+					new: 'unused_i18n_variables',
+				},
+			]);
+			// Old directus_fields rows were deleted so migrateCollectionFields
+			// will recreate the new field meta cleanly.
+			const remaining = (s._stores.directus_fields ?? []).map((r: any) => r.field);
+			expect(remaining).not.toContain('strings');
+			expect(remaining).not.toContain('unused_strings');
+		});
+
+		it('is a no-op when no legacy columns exist (idempotent)', async () => {
+			const s = makeServices();
+			const logger = makeLogger();
+			const { database, alterTable } = makeDb();
+			await runBootstrap(dir, s as any, getSchema, {}, logger, database);
+			expect(alterTable).not.toHaveBeenCalled();
+		});
+
+		it('skips DB alter when database is not provided', async () => {
+			const s = makeServices({
+				items: {
+					directus_fields: {
+						rows: [
+							{
+								id: 'f-1',
+								collection: 'email_template_translations',
+								field: 'strings',
+							},
+						],
+					},
+				},
+			});
+			const logger = makeLogger();
+			await runBootstrap(dir, s as any, getSchema, {}, logger);
+			// Legacy rows remain untouched because we have no knex to rename.
+			expect(s._stores.directus_fields?.some((r: any) => r.field === 'strings')).toBe(true);
+		});
+
+		it('skips renameColumn when DB column already absent (rerun safety)', async () => {
+			const s = makeServices({
+				items: {
+					directus_fields: {
+						rows: [
+							{
+								id: 'f-1',
+								collection: 'email_template_translations',
+								field: 'strings',
+							},
+						],
+					},
+				},
+			});
+			const logger = makeLogger();
+			const { database, alterTable } = makeDb();
+			(database.schema.hasColumn as any).mockImplementation(async () => false);
+			await runBootstrap(dir, s as any, getSchema, {}, logger, database);
+			expect(alterTable).not.toHaveBeenCalled();
+			// Stale directus_fields row still gets cleaned up.
+			expect(
+				(s._stores.directus_fields ?? []).some((r: any) => r.field === 'strings'),
+			).toBe(false);
+		});
+	});
+
+	describe('language name capitalization backfill', () => {
+		it('capitalizes leading lowercase letter for existing language rows', async () => {
+			const s = makeServices({
+				items: {
+					languages: {
+						rows: [
+							{ id: 'fr-FR', code: 'fr-FR', name: 'français' },
+							{ id: 'en-US', code: 'en-US', name: 'English' },
+							{ id: 'de-DE', code: 'de-DE', name: 'deutsch' },
+						],
+					},
+				},
+			});
+			const logger = makeLogger();
+			await runBootstrap(dir, s as any, getSchema, {}, logger);
+			const langs = s._stores.languages ?? [];
+			expect(langs.find((r: any) => r.code === 'fr-FR')?.name).toBe('Français');
+			expect(langs.find((r: any) => r.code === 'de-DE')?.name).toBe('Deutsch');
+			// Already-capitalized rows are untouched.
+			expect(langs.find((r: any) => r.code === 'en-US')?.name).toBe('English');
+		});
+
+		it('is a no-op when all language names are already capitalized', async () => {
+			const updateOne = vi.fn(async (id: string | number) => id);
+			const s = makeServices({
+				items: {
+					languages: {
+						rows: [{ id: 'en-US', code: 'en-US', name: 'English' }],
+						updateOne,
+					},
+				},
+			});
+			const logger = makeLogger();
+			await runBootstrap(dir, s as any, getSchema, {}, logger);
+			expect(updateOne).not.toHaveBeenCalled();
 		});
 	});
 });

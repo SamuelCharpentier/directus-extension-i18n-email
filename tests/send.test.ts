@@ -44,7 +44,7 @@ const buildServices = (
 						languages_code: 'fr',
 						subject: 'Réinit',
 						from_name: 'Mon Org',
-						strings: { heading: 'Salut' },
+						i18n_variables: { heading: 'Salut' },
 					},
 					{
 						id: 'pen',
@@ -52,7 +52,7 @@ const buildServices = (
 						languages_code: 'en',
 						subject: 'Reset',
 						from_name: null,
-						strings: { heading: 'Hi' },
+						i18n_variables: { heading: 'Hi' },
 					},
 					{
 						id: 'bfr',
@@ -60,7 +60,7 @@ const buildServices = (
 						languages_code: 'fr',
 						subject: '',
 						from_name: null,
-						strings: { footer_note: 'au revoir' },
+						i18n_variables: { footer_note: 'au revoir' },
 					},
 				],
 			},
@@ -107,7 +107,7 @@ describe('runSendFilter', () => {
 					languages_code: 'en',
 					subject: 'Reset',
 					from_name: null,
-					strings: { heading: 'Hi' },
+					i18n_variables: { heading: 'Hi' },
 				},
 			],
 		});
@@ -159,7 +159,7 @@ describe('runSendFilter', () => {
 					languages_code: 'en',
 					subject: 'Sub',
 					from_name: null,
-					strings: {},
+					i18n_variables: {},
 				},
 			],
 			vars: [],
@@ -214,7 +214,7 @@ describe('runSendFilter', () => {
 					languages_code: 'en',
 					subject: 'Reset',
 					from_name: null,
-					strings: {},
+					i18n_variables: {},
 				},
 			],
 		});
@@ -298,7 +298,7 @@ describe('runSendFilter', () => {
 					languages_code: 'fr',
 					subject: '',
 					from_name: null,
-					strings: { footer_note: 'au revoir' },
+					i18n_variables: { footer_note: 'au revoir' },
 				},
 			],
 		});
@@ -327,7 +327,7 @@ describe('runSendFilter', () => {
 					languages_code: 'fr',
 					subject: 'Bonjour {{ user.first_name }}',
 					from_name: 'Org de {{ user.first_name }}',
-					strings: {
+					i18n_variables: {
 						heading: 'Salut {{ user.first_name }}',
 						body: 'Lien : {{ url }}',
 					},
@@ -338,7 +338,7 @@ describe('runSendFilter', () => {
 					languages_code: 'fr',
 					subject: '',
 					from_name: null,
-					strings: { footer_note: 'À bientôt {{ user.first_name }}' },
+					i18n_variables: { footer_note: 'À bientôt {{ user.first_name }}' },
 				},
 			],
 		});
@@ -364,7 +364,7 @@ describe('runSendFilter', () => {
 					languages_code: 'fr',
 					subject: 'OK',
 					from_name: null,
-					strings: { heading: '{% bogus %}' },
+					i18n_variables: { heading: '{% bogus %}' },
 				},
 			],
 		});

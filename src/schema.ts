@@ -272,7 +272,7 @@ export const EMAIL_TEMPLATE_TRANSLATIONS_COLLECTION: CollectionPayload = {
 			schema: { is_nullable: true },
 		},
 		{
-			field: 'strings',
+			field: 'i18n_variables',
 			type: 'json',
 			meta: {
 				interface: 'i18n-strings-editor',
@@ -287,7 +287,7 @@ export const EMAIL_TEMPLATE_TRANSLATIONS_COLLECTION: CollectionPayload = {
 			schema: { is_nullable: false, default_value: '{}' },
 		},
 		{
-			field: 'unused_strings',
+			field: 'unused_i18n_variables',
 			type: 'json',
 			meta: {
 				interface: 'i18n-strings-editor',
@@ -300,7 +300,7 @@ export const EMAIL_TEMPLATE_TRANSLATIONS_COLLECTION: CollectionPayload = {
 				conditions: [
 					{
 						name: 'hide-when-empty',
-						rule: { unused_strings: { _in: [null, '{}', ''] } },
+						rule: { unused_i18n_variables: { _in: [null, '{}', ''] } },
 						hidden: true,
 					},
 				],

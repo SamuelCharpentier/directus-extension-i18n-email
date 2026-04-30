@@ -16,7 +16,7 @@ import {
 
 describe('localizeLangCode', () => {
 	it('returns the endonym (language name in its own language) in "Language (Region)" form', () => {
-		expect(localizeLangCode('fr-CA')).toBe('français (Canada)');
+		expect(localizeLangCode('fr-CA')).toBe('Français (Canada)');
 		expect(localizeLangCode('en-US')).toBe('English (United States)');
 	});
 	it('falls back to the raw code when Intl.DisplayNames throws (malformed code)', () => {
@@ -192,7 +192,7 @@ describe('fetchTemplateWithTranslation', () => {
 							languages_code: 'fr-FR',
 							subject: '',
 							from_name: null,
-							strings: {},
+							i18n_variables: {},
 						},
 						{
 							id: 'full-en',
@@ -200,7 +200,7 @@ describe('fetchTemplateWithTranslation', () => {
 							languages_code: 'en-US',
 							subject: 'Hello',
 							from_name: null,
-							strings: { greeting: 'hi' },
+							i18n_variables: { greeting: 'hi' },
 						},
 					],
 				},
@@ -229,7 +229,7 @@ describe('fetchTemplateWithTranslation', () => {
 							languages_code: 'en-US',
 							subject: '',
 							from_name: null,
-							strings: {},
+							i18n_variables: {},
 						},
 					],
 				},

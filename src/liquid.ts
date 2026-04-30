@@ -62,7 +62,7 @@ export async function renderLiquidStrings(
  * Static-analyse a template body and return the set of `i18n.*` keys
  * it references. Powers translation-row reconciliation: keys present
  * in the body but missing from the JSON are added empty; keys present
- * in the JSON but absent from the body are moved into `unused_strings`.
+ * in the JSON but absent from the body are moved into `unused_i18n_variables`.
  *
  * Behaviour:
  *  - Uses LiquidJS's `globalVariableSegmentsSync` (introspection only,

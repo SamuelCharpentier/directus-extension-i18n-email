@@ -4,8 +4,8 @@ import { TEMPLATES_COLLECTION, TRANSLATIONS_COLLECTION } from './constants';
 import { extractI18nKeys } from './liquid';
 
 export type ReconcileResult = {
-	strings: TranslationStrings;
-	unused_strings: TranslationStrings;
+	i18n_variables: TranslationStrings;
+	unused_i18n_variables: TranslationStrings;
 	changed: boolean;
 };
 
@@ -15,49 +15,49 @@ export type ReconcileResult = {
  * body.
  *
  * Rules:
- *   - Keys in `usedKeys` missing from `strings`: added with value `""`.
- *     If the same key already lives in `unused_strings`, its previous
+ *   - Keys in `usedKeys` missing from `i18n_variables`: added with value `""`.
+ *     If the same key already lives in `unused_i18n_variables`, its previous
  *     value is restored (so toggling a variable in/out of the body is
  *     non-destructive).
- *   - Keys in `strings` absent from `usedKeys`: moved into
- *     `unused_strings` with their value preserved.
- *   - Keys in `unused_strings` that are also in `usedKeys`: removed
- *     from `unused_strings` (they're now active and live in `strings`).
+ *   - Keys in `i18n_variables` absent from `usedKeys`: moved into
+ *     `unused_i18n_variables` with their value preserved.
+ *   - Keys in `unused_i18n_variables` that are also in `usedKeys`: removed
+ *     from `unused_i18n_variables` (they're now active and live in `i18n_variables`).
  *   - Operation is idempotent: running it twice yields the same result
  *     and reports `changed: false` on the second pass.
  */
 export function reconcileTranslationStrings(
-	currentStrings: TranslationStrings | null | undefined,
+	currentActive: TranslationStrings | null | undefined,
 	currentUnused: TranslationStrings | null | undefined,
 	usedKeys: ReadonlySet<string>,
 ): ReconcileResult {
-	const strings: TranslationStrings = { ...(currentStrings ?? {}) };
+	const active: TranslationStrings = { ...(currentActive ?? {}) };
 	const unused: TranslationStrings = { ...(currentUnused ?? {}) };
 
 	// Promote unused → active when the body references them again.
 	for (const key of usedKeys) {
-		if (!(key in strings)) {
+		if (!(key in active)) {
 			if (key in unused) {
-				strings[key] = unused[key]!;
+				active[key] = unused[key]!;
 				delete unused[key];
 			} else {
-				strings[key] = '';
+				active[key] = '';
 			}
 		}
 	}
 
 	// Demote active → unused when the body no longer references them.
-	for (const key of Object.keys(strings)) {
+	for (const key of Object.keys(active)) {
 		if (!usedKeys.has(key)) {
-			unused[key] = strings[key]!;
-			delete strings[key];
+			unused[key] = active[key]!;
+			delete active[key];
 		}
 	}
 
 	const changed =
-		!shallowStringEqual(currentStrings ?? {}, strings) ||
+		!shallowStringEqual(currentActive ?? {}, active) ||
 		!shallowStringEqual(currentUnused ?? {}, unused);
-	return { strings, unused_strings: unused, changed };
+	return { i18n_variables: active, unused_i18n_variables: unused, changed };
 }
 
 function shallowStringEqual(a: TranslationStrings, b: TranslationStrings): boolean {
@@ -70,7 +70,7 @@ function shallowStringEqual(a: TranslationStrings, b: TranslationStrings): boole
 }
 
 /**
- * Build a starter `strings` map for a brand-new translation row. Every
+ * Build a starter `i18n_variables` map for a brand-new translation row. Every
  * key referenced by the template body gets an empty string. Used by
  * the `email_template_translations.items.create` filter so admins
  * land on a populated form instead of an empty `{}`.
@@ -88,8 +88,8 @@ export function buildInitialStrings(
 
 /**
  * Walk every translation row attached to a template and reconcile its
- * `strings` / `unused_strings` against the body. Only writes rows that
- * actually changed.
+ * `i18n_variables` / `unused_i18n_variables` against the body. Only writes
+ * rows that actually changed.
  */
 export async function reconcileTranslationsForTemplate(
 	template: { id?: string; template_key: string; body: string },
@@ -123,12 +123,16 @@ export async function reconcileTranslationsForTemplate(
 
 	let updated = 0;
 	for (const row of rows) {
-		const result = reconcileTranslationStrings(row.strings, row.unused_strings, usedKeys);
+		const result = reconcileTranslationStrings(
+			row.i18n_variables,
+			row.unused_i18n_variables,
+			usedKeys,
+		);
 		if (!result.changed) continue;
 		try {
 			await items.updateOne(row.id!, {
-				strings: result.strings,
-				unused_strings: result.unused_strings,
+				i18n_variables: result.i18n_variables,
+				unused_i18n_variables: result.unused_i18n_variables,
 			});
 			updated += 1;
 		} catch (err) {

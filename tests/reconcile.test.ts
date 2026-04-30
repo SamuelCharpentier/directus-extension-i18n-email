@@ -94,31 +94,31 @@ describe('extractI18nKeys', () => {
 describe('reconcileTranslationStrings', () => {
 	it('adds missing keys as empty', () => {
 		const r = reconcileTranslationStrings({}, {}, new Set(['a', 'b']));
-		expect(r.strings).toEqual({ a: '', b: '' });
-		expect(r.unused_strings).toEqual({});
+		expect(r.i18n_variables).toEqual({ a: '', b: '' });
+		expect(r.unused_i18n_variables).toEqual({});
 		expect(r.changed).toBe(true);
 	});
 
 	it('moves orphan keys to unused, preserving values', () => {
 		const r = reconcileTranslationStrings({ a: 'A', orphan: 'O' }, {}, new Set(['a']));
-		expect(r.strings).toEqual({ a: 'A' });
-		expect(r.unused_strings).toEqual({ orphan: 'O' });
+		expect(r.i18n_variables).toEqual({ a: 'A' });
+		expect(r.unused_i18n_variables).toEqual({ orphan: 'O' });
 		expect(r.changed).toBe(true);
 	});
 
 	it('promotes unused keys back to active when re-referenced', () => {
 		const r = reconcileTranslationStrings({ a: 'A' }, { b: 'B-prev' }, new Set(['a', 'b']));
-		expect(r.strings).toEqual({ a: 'A', b: 'B-prev' });
-		expect(r.unused_strings).toEqual({});
+		expect(r.i18n_variables).toEqual({ a: 'A', b: 'B-prev' });
+		expect(r.unused_i18n_variables).toEqual({});
 		expect(r.changed).toBe(true);
 	});
 
 	it('is idempotent', () => {
 		const used = new Set(['a', 'b']);
 		const first = reconcileTranslationStrings({ a: 'A' }, { b: 'B' }, used);
-		const second = reconcileTranslationStrings(first.strings, first.unused_strings, used);
-		expect(second.strings).toEqual(first.strings);
-		expect(second.unused_strings).toEqual(first.unused_strings);
+		const second = reconcileTranslationStrings(first.i18n_variables, first.unused_i18n_variables, used);
+		expect(second.i18n_variables).toEqual(first.i18n_variables);
+		expect(second.unused_i18n_variables).toEqual(first.unused_i18n_variables);
 		expect(second.changed).toBe(false);
 	});
 
@@ -129,14 +129,14 @@ describe('reconcileTranslationStrings', () => {
 
 	it('handles null current state', () => {
 		const r = reconcileTranslationStrings(null, null, new Set(['a']));
-		expect(r.strings).toEqual({ a: '' });
-		expect(r.unused_strings).toEqual({});
+		expect(r.i18n_variables).toEqual({ a: '' });
+		expect(r.unused_i18n_variables).toEqual({});
 		expect(r.changed).toBe(true);
 	});
 
 	it('handles undefined current state', () => {
 		const r = reconcileTranslationStrings(undefined, undefined, new Set(['a']));
-		expect(r.strings).toEqual({ a: '' });
+		expect(r.i18n_variables).toEqual({ a: '' });
 		expect(r.changed).toBe(true);
 	});
 
@@ -158,8 +158,8 @@ describe('reconcileTranslationStrings', () => {
 		// Both maps end up size 1, so the equality check must fall through
 		// to the per-key membership branch (`!(k in b)` returns false).
 		const r = reconcileTranslationStrings({ a: '' }, {}, new Set(['b']));
-		expect(r.strings).toEqual({ b: '' });
-		expect(r.unused_strings).toEqual({ a: '' });
+		expect(r.i18n_variables).toEqual({ b: '' });
+		expect(r.unused_i18n_variables).toEqual({ a: '' });
 		expect(r.changed).toBe(true);
 	});
 });
@@ -186,23 +186,23 @@ describe('reconcileTranslationsForTemplate', () => {
 							id: 't1',
 							email_templates_id: 'tpl-1',
 							languages_code: 'en-US',
-							strings: { heading: 'Hi', orphan: 'old' },
-							unused_strings: {},
+							i18n_variables: { heading: 'Hi', orphan: 'old' },
+							unused_i18n_variables: {},
 						},
 						{
 							id: 't2',
 							email_templates_id: 'tpl-1',
 							languages_code: 'fr-FR',
-							strings: { heading: 'Salut' },
-							unused_strings: {},
+							i18n_variables: { heading: 'Salut' },
+							unused_i18n_variables: {},
 						},
 						{
 							// noise: belongs to a different template, must be ignored
 							id: 't3',
 							email_templates_id: 'tpl-other',
 							languages_code: 'en-US',
-							strings: {},
-							unused_strings: {},
+							i18n_variables: {},
+							unused_i18n_variables: {},
 						},
 					],
 				},
@@ -217,10 +217,10 @@ describe('reconcileTranslationsForTemplate', () => {
 		);
 		expect(res).toEqual({ scanned: 2, updated: 1 });
 		const t1 = services._stores.email_template_translations!.find((r: any) => r.id === 't1');
-		expect(t1.strings).toEqual({ heading: 'Hi' });
-		expect(t1.unused_strings).toEqual({ orphan: 'old' });
+		expect(t1.i18n_variables).toEqual({ heading: 'Hi' });
+		expect(t1.unused_i18n_variables).toEqual({ orphan: 'old' });
 		const t2 = services._stores.email_template_translations!.find((r: any) => r.id === 't2');
-		expect(t2.strings).toEqual({ heading: 'Salut' });
+		expect(t2.i18n_variables).toEqual({ heading: 'Salut' });
 		expect(logger.info).toHaveBeenCalledWith(expect.stringContaining('Reconciled 1/2'));
 	});
 
@@ -269,8 +269,8 @@ describe('reconcileTranslationsForTemplate', () => {
 							id: 't1',
 							email_templates_id: 'tpl-1',
 							languages_code: 'en-US',
-							strings: { orphan: 'x' },
-							unused_strings: {},
+							i18n_variables: { orphan: 'x' },
+							unused_i18n_variables: {},
 						},
 					],
 					updateOne: async () => {

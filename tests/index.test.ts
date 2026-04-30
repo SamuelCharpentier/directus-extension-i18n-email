@@ -110,7 +110,7 @@ describe('hook registration', () => {
 			code: 'fr-FR',
 		})) as any;
 		expect(out.code).toBe('fr-FR');
-		expect(out.name).toBe('français (France)');
+		expect(out.name).toBe('Français (France)');
 	});
 
 	it('languages.items.create skips when code missing or name already set', async () => {
@@ -347,8 +347,8 @@ describe('hook registration', () => {
 			email_templates_id: 'tpl-1',
 			languages_code: 'en-US',
 		})) as any;
-		expect(out.strings).toEqual({ heading: '', body: '' });
-		expect(out.unused_strings).toEqual({});
+		expect(out.i18n_variables).toEqual({ heading: '', body: '' });
+		expect(out.unused_i18n_variables).toEqual({});
 	});
 
 	it('translations create filter preserves caller-supplied strings', async () => {
@@ -358,37 +358,37 @@ describe('hook registration', () => {
 		];
 		const out = (await handlers.filters['email_template_translations.items.create']!({
 			email_templates_id: 'tpl-1',
-			strings: { custom: 'value' },
+			i18n_variables: { custom: 'value' },
 		})) as any;
-		expect(out.strings).toEqual({ custom: 'value' });
-		expect(out.unused_strings).toEqual({});
+		expect(out.i18n_variables).toEqual({ custom: 'value' });
+		expect(out.unused_i18n_variables).toEqual({});
 	});
 
-	it('translations create filter preserves caller-supplied unused_strings (both maps already set)', async () => {
+	it('translations create filter preserves caller-supplied unused_i18n_variables (both maps already set)', async () => {
 		const { handlers, services } = register({ EMAIL_TEMPLATES_PATH: dir });
 		services._stores.email_templates = [
 			{ id: 'tpl-1', template_key: 'p', body: '{{ i18n.heading }}' },
 		];
 		const out = (await handlers.filters['email_template_translations.items.create']!({
 			email_templates_id: 'tpl-1',
-			strings: { custom: 'value' },
-			unused_strings: { kept: 'k' },
+			i18n_variables: { custom: 'value' },
+			unused_i18n_variables: { kept: 'k' },
 		})) as any;
-		expect(out.strings).toEqual({ custom: 'value' });
-		expect(out.unused_strings).toEqual({ kept: 'k' });
+		expect(out.i18n_variables).toEqual({ custom: 'value' });
+		expect(out.unused_i18n_variables).toEqual({ kept: 'k' });
 	});
 
-	it('translations create filter preserves caller-supplied unused_strings when strings empty', async () => {
+	it('translations create filter preserves caller-supplied unused_i18n_variables when strings empty', async () => {
 		const { handlers, services } = register({ EMAIL_TEMPLATES_PATH: dir });
 		services._stores.email_templates = [
 			{ id: 'tpl-1', template_key: 'p', body: '{{ i18n.heading }}' },
 		];
 		const out = (await handlers.filters['email_template_translations.items.create']!({
 			email_templates_id: 'tpl-1',
-			unused_strings: { kept: 'k' },
+			unused_i18n_variables: { kept: 'k' },
 		})) as any;
-		expect(out.strings).toEqual({ heading: '' });
-		expect(out.unused_strings).toEqual({ kept: 'k' });
+		expect(out.i18n_variables).toEqual({ heading: '' });
+		expect(out.unused_i18n_variables).toEqual({ kept: 'k' });
 	});
 
 	it('translations create filter no-op when parent id missing', async () => {
@@ -405,8 +405,8 @@ describe('hook registration', () => {
 		const out = (await handlers.filters['email_template_translations.items.create']!({
 			email_templates_id: 'missing',
 		})) as any;
-		expect(out.strings).toEqual({});
-		expect(out.unused_strings).toEqual({});
+		expect(out.i18n_variables).toEqual({});
+		expect(out.unused_i18n_variables).toEqual({});
 	});
 
 	it('translations create filter warns when getSchema throws', async () => {
@@ -421,7 +421,7 @@ describe('hook registration', () => {
 		const out = (await handlers.filters['email_template_translations.items.create']!({
 			email_templates_id: 'tpl-1',
 		})) as any;
-		expect(out.strings).toEqual({});
+		expect(out.i18n_variables).toEqual({});
 		expect(logger.warn).toHaveBeenCalledWith(
 			expect.stringContaining('Translation pre-fill skipped'),
 		);
@@ -436,8 +436,8 @@ describe('hook registration', () => {
 				id: 't1',
 				email_templates_id: 'tpl-1',
 				languages_code: 'en-US',
-				strings: { stale: 'X' },
-				unused_strings: {},
+				i18n_variables: { stale: 'X' },
+				unused_i18n_variables: {},
 			},
 		];
 		await handlers.actions['email_templates.items.create']!({
@@ -445,8 +445,8 @@ describe('hook registration', () => {
 			payload: { template_key: 'pr', body: '{{ i18n.heading }}' },
 		});
 		const t1 = services._stores.email_template_translations!.find((r: any) => r.id === 't1');
-		expect(t1.strings).toEqual({ heading: '' });
-		expect(t1.unused_strings).toEqual({ stale: 'X' });
+		expect(t1.i18n_variables).toEqual({ heading: '' });
+		expect(t1.unused_i18n_variables).toEqual({ stale: 'X' });
 	});
 
 	it('update action reconciles when body changes', async () => {
@@ -459,8 +459,8 @@ describe('hook registration', () => {
 				id: 't1',
 				email_templates_id: '1',
 				languages_code: 'en-US',
-				strings: { heading: 'H', orphan: 'O' },
-				unused_strings: {},
+				i18n_variables: { heading: 'H', orphan: 'O' },
+				unused_i18n_variables: {},
 			},
 		];
 		await handlers.actions['email_templates.items.update']!({
@@ -468,7 +468,7 @@ describe('hook registration', () => {
 			payload: { body: '{{ i18n.body }}' },
 		});
 		const t1 = services._stores.email_template_translations!.find((r: any) => r.id === 't1');
-		expect(t1.strings).toEqual({ body: '' });
-		expect(t1.unused_strings).toEqual({ heading: 'H', orphan: 'O' });
+		expect(t1.i18n_variables).toEqual({ body: '' });
+		expect(t1.unused_i18n_variables).toEqual({ heading: 'H', orphan: 'O' });
 	});
 });
