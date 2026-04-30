@@ -75,6 +75,17 @@ const refreshError = ref<string | null>(null);
 const lastSummary = ref<string | null>(null);
 
 /**
+ * The parent row's `template_key`. Drives `extractI18nKeys`'s
+ * base-vs-non-base branching: the `base` layout's body references
+ * `i18n.base.*` (so the row's stored map is keyed without the
+ * `base.` prefix), while every other template uses bare `i18n.*`
+ * paths. Resolved once on mount via the API; falls back to an
+ * empty string (treated as non-base) if the lookup fails or this
+ * is a brand-new unsaved row.
+ */
+const templateKey = ref<string>('');
+
+/**
  * Latest body string we've seen via `i18n-email:body-snapshot`. If
  * the user clicks Refresh before any snapshot has arrived (rare —
  * snapshots fire on every keystroke), we fall back to an empty
@@ -88,7 +99,7 @@ const LOG = '[i18n-email/translations]';
 function broadcastFromBody(reason: 'manual' | 'blur'): void {
 	if (props.disabled) return;
 	refreshError.value = null;
-	const keys = extractI18nKeys(lastBody.value, 'translations-interface', noopWarn);
+	const keys = extractI18nKeys(lastBody.value, templateKey.value, noopWarn);
 	dlog(`${LOG} ${reason} broadcast: ${keys.size} key(s)`, Array.from(keys));
 	dispatchReconcile(keys);
 	if (reason === 'manual') {
@@ -206,6 +217,27 @@ onMounted(async () => {
 	if (typeof window !== 'undefined') {
 		window.addEventListener('i18n-email:body-snapshot', onBodySnapshot);
 		window.addEventListener('i18n-email:body-blur', onBodyBlur);
+	}
+	// Resolve template_key for base-vs-non-base key extraction. Done
+	// once on mount: the field is the row's natural key and never
+	// changes after creation. New unsaved rows have no primaryKey
+	// yet, in which case we leave templateKey empty (non-base path).
+	if (
+		props.collection &&
+		props.primaryKey !== undefined &&
+		props.primaryKey !== null &&
+		props.primaryKey !== '+'
+	) {
+		try {
+			const row = await api.get(
+				`/items/${props.collection}/${encodeURIComponent(String(props.primaryKey))}`,
+				{ params: { fields: 'template_key' } },
+			);
+			const key = row?.data?.data?.template_key;
+			if (typeof key === 'string') templateKey.value = key;
+		} catch {
+			// Best-effort: stay on the non-base path.
+		}
 	}
 	try {
 		const me = await api.get('/users/me', { params: { fields: 'id' } });
