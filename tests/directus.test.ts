@@ -12,11 +12,30 @@ import {
 	fetchAdminEmails,
 	fetchRecipientUser,
 	localizeLangCode,
+	capitalizeFirst,
 } from '../src/directus';
+
+describe('capitalizeFirst', () => {
+	it('returns empty input untouched', () => {
+		expect(capitalizeFirst('')).toBe('');
+	});
+	it('upper-cases first letter without locale (default ASCII path)', () => {
+		expect(capitalizeFirst('paris')).toBe('Paris');
+	});
+	it('honors locale-aware casing (Turkish dotted I)', () => {
+		expect(capitalizeFirst('istanbul', 'tr')).toBe('İstanbul');
+	});
+	it('returns string unchanged when first character is already upper-case', () => {
+		expect(capitalizeFirst('English')).toBe('English');
+	});
+	it('returns string unchanged when first character has no case (digit)', () => {
+		expect(capitalizeFirst('1st')).toBe('1st');
+	});
+});
 
 describe('localizeLangCode', () => {
 	it('returns the endonym (language name in its own language) in "Language (Region)" form', () => {
-		expect(localizeLangCode('fr-CA')).toBe('français (Canada)');
+		expect(localizeLangCode('fr-CA')).toBe('Français (Canada)');
 		expect(localizeLangCode('en-US')).toBe('English (United States)');
 	});
 	it('falls back to the raw code when Intl.DisplayNames throws (malformed code)', () => {
@@ -192,7 +211,7 @@ describe('fetchTemplateWithTranslation', () => {
 							languages_code: 'fr-FR',
 							subject: '',
 							from_name: null,
-							strings: {},
+							i18n_variables: {},
 						},
 						{
 							id: 'full-en',
@@ -200,19 +219,13 @@ describe('fetchTemplateWithTranslation', () => {
 							languages_code: 'en-US',
 							subject: 'Hello',
 							from_name: null,
-							strings: { greeting: 'hi' },
+							i18n_variables: { greeting: 'hi' },
 						},
 					],
 				},
 			},
 		});
-		const r = await fetchTemplateWithTranslation(
-			'x',
-			'fr-FR',
-			'en-US',
-			s as any,
-			makeSchema(),
-		);
+		const r = await fetchTemplateWithTranslation('x', 'fr-FR', 'en-US', s as any, makeSchema());
 		expect(r?.translation?.id).toBe('full-en');
 	});
 	it('keeps placeholder when effective lang IS default lang (no fallback target)', async () => {
@@ -229,19 +242,13 @@ describe('fetchTemplateWithTranslation', () => {
 							languages_code: 'en-US',
 							subject: '',
 							from_name: null,
-							strings: {},
+							i18n_variables: {},
 						},
 					],
 				},
 			},
 		});
-		const r = await fetchTemplateWithTranslation(
-			'x',
-			'en-US',
-			'en-US',
-			s as any,
-			makeSchema(),
-		);
+		const r = await fetchTemplateWithTranslation('x', 'en-US', 'en-US', s as any, makeSchema());
 		expect(r?.translation?.id).toBe('empty-en');
 	});
 });

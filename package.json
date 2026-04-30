@@ -11,7 +11,12 @@
 	"keywords": [
 		"directus",
 		"directus-extension",
+		"directus-extension-bundle",
 		"directus-extension-hook",
+		"directus-extension-interface",
+		"directus-custom-bundle",
+		"directus-custom-hook",
+		"directus-custom-interface",
 		"i18n",
 		"mail",
 		"translation",
@@ -34,13 +39,37 @@
 		"dist"
 	],
 	"directus:extension": {
-		"type": "hook",
-		"path": "dist/index.js",
-		"source": "src/index.ts",
+		"type": "bundle",
+		"path": {
+			"app": "dist/app.js",
+			"api": "dist/api.js"
+		},
+		"entries": [
+			{
+				"type": "hook",
+				"name": "i18n-email-hook",
+				"source": "src/index.ts"
+			},
+			{
+				"type": "interface",
+				"name": "i18n-strings-editor",
+				"source": "src/interface/json-index.ts"
+			},
+			{
+				"type": "interface",
+				"name": "body-i18n-aware",
+				"source": "src/interface/body-index.ts"
+			},
+			{
+				"type": "interface",
+				"name": "translations-i18n-aware",
+				"source": "src/interface/translations-index.ts"
+			}
+		],
 		"host": "11.17.2"
 	},
 	"scripts": {
-		"typecheck": "tsc --noEmit",
+		"typecheck": "vue-tsc --noEmit",
 		"lint": "eslint .",
 		"verify": "npm run typecheck && npm run lint",
 		"test": "npm run verify && vitest run",
@@ -57,10 +86,16 @@
 		"@types/ip": "^1.1.3",
 		"@types/node": "^25.4.0",
 		"@vitest/coverage-v8": "^4.1.5",
+		"@vue/tsconfig": "^0.9.1",
 		"eslint": "^10.2.1",
+		"eslint-plugin-vue": "^10.9.0",
+		"globals": "^17.5.0",
 		"typescript": "^5.9.3",
 		"typescript-eslint": "^8.59.0",
-		"vitest": "^4.1.4"
+		"vitest": "^4.1.4",
+		"vue": "^3.5.24",
+		"vue-eslint-parser": "^10.4.0",
+		"vue-tsc": "^3.2.7"
 	},
 	"dependencies": {
 		"liquidjs": "^10.25.7"

@@ -2,10 +2,26 @@ import type { EmailOptions, HookConfig } from '@directus/types';
 import { runBootstrap } from './bootstrap';
 import { runSendFilter } from './send';
 import { syncTemplateBody } from './sync';
-import { LANGUAGES_COLLECTION, TEMPLATES_COLLECTION, VARIABLES_COLLECTION } from './constants';
+import {
+	LANGUAGES_COLLECTION,
+	TEMPLATES_COLLECTION,
+	TRANSLATIONS_COLLECTION,
+	VARIABLES_COLLECTION,
+} from './constants';
 import { computeChecksum } from './integrity';
 import { localizeLangCode } from './directus';
-import type { EmailTemplateRow, EmailTemplateVariableRow, LanguageRow } from './types';
+import {
+	buildInitialStrings,
+	coerceI18nVariables,
+	fetchTemplateBodyById,
+	reconcileTranslationsForTemplate,
+} from './reconcile';
+import type {
+	EmailTemplateRow,
+	EmailTemplateTranslationRow,
+	EmailTemplateVariableRow,
+	LanguageRow,
+} from './types';
 
 function templatesPathFromEnv(env: Record<string, unknown>): string {
 	return typeof env['EMAIL_TEMPLATES_PATH'] === 'string'
@@ -13,7 +29,10 @@ function templatesPathFromEnv(env: Record<string, unknown>): string {
 		: '';
 }
 
-const hook: HookConfig = ({ filter, action, init }, { services, logger, getSchema, env }) => {
+const hook: HookConfig = (
+	{ filter, action, init },
+	{ services, logger, getSchema, env, database },
+) => {
 	logger.info('[i18n-email] Hook registered.');
 
 	// Bootstrap is intentionally fire-and-forget so it does NOT block
@@ -24,7 +43,7 @@ const hook: HookConfig = ({ filter, action, init }, { services, logger, getSchem
 	// `runBootstrap` promise (it coalesces concurrent calls) and
 	// returns immediately. Errors are logged inside runBootstrap.
 	const kickBootstrap = (): void => {
-		void runBootstrap(templatesPathFromEnv(env), services, getSchema, env, logger);
+		void runBootstrap(templatesPathFromEnv(env), services, getSchema, env, logger, database);
 	};
 
 	if (typeof init === 'function') {
@@ -70,6 +89,7 @@ const hook: HookConfig = ({ filter, action, init }, { services, logger, getSchem
 				logger,
 				'body-create',
 			);
+			await reconcileTranslationsForTemplate(full, services, schema, logger);
 		} catch (err) {
 			logger.error(`[i18n-email] Post-create sync failed: ${(err as Error).message}`);
 		}
@@ -99,6 +119,7 @@ const hook: HookConfig = ({ filter, action, init }, { services, logger, getSchem
 					logger,
 					'body-update',
 				);
+				await reconcileTranslationsForTemplate(row, services, schema, logger);
 			}
 		} catch (err) {
 			logger.error(`[i18n-email] Post-update sync failed: ${(err as Error).message}`);
@@ -128,6 +149,42 @@ const hook: HookConfig = ({ filter, action, init }, { services, logger, getSchem
 			patch.checksum = computeChecksum({ body: patch.body ?? '' });
 		}
 		return patch;
+	});
+
+	// ──────────── Pre-fill `i18n_variables` on translation create ────────────
+	// When an admin adds a new language for an existing template, derive
+	// the empty key map from the parent body so the UI lands on a fully
+	// scaffolded form. Existing values supplied in the create payload
+	// are preserved (and coerced to the canonical shape if the caller
+	// supplied legacy bare keys, e.g. seeds).
+	filter(`${TRANSLATIONS_COLLECTION}.items.create`, async (payload: unknown) => {
+		const row = payload as Partial<EmailTemplateTranslationRow>;
+		const parentId = row.email_templates_id;
+		if (!parentId) return row;
+		const incoming = row.i18n_variables;
+		const incomingHasKeys =
+			(typeof incoming === 'string' && incoming.trim().length > 0) ||
+			(incoming &&
+				typeof incoming === 'object' &&
+				!Array.isArray(incoming) &&
+				Object.keys(incoming as Record<string, unknown>).length > 0);
+		if (incomingHasKeys) {
+			row.i18n_variables = coerceI18nVariables(
+				incoming as Parameters<typeof coerceI18nVariables>[0],
+			);
+			return row;
+		}
+		try {
+			const schema = await getSchema();
+			const tpl = await fetchTemplateBodyById(String(parentId), services, schema, logger);
+			if (tpl) {
+				row.i18n_variables = buildInitialStrings(tpl.body, tpl.template_key, logger);
+			}
+		} catch (err) {
+			logger.warn(`[i18n-email] Translation pre-fill skipped: ${(err as Error).message}`);
+		}
+		if (!row.i18n_variables) row.i18n_variables = { in_template: {}, unused: {} };
+		return row;
 	});
 
 	// ──────────── Protected-row delete guards ────────────

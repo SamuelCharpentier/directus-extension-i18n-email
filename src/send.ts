@@ -12,6 +12,7 @@ import { validateRequiredVariables } from './registry';
 import { notifyAdmins, isAdminErrorTemplate } from './admin-alert';
 import { BASE_LAYOUT_KEY, isSystemTemplateKey } from './constants';
 import { renderLiquidString, renderLiquidStrings } from './liquid';
+import { coerceI18nVariables } from './reconcile';
 import type { EmailTemplateTranslationRow } from './types';
 
 export type SendFilterDeps = {
@@ -96,7 +97,9 @@ export async function runSendFilter(
 			services,
 			schema,
 		);
-		const baseStrings = baseResolved?.translation?.strings ?? null;
+		const baseStrings = baseResolved?.translation
+			? coerceI18nVariables(baseResolved.translation.i18n_variables).in_template
+			: null;
 
 		// User hydration for protected system emails.
 		let recipientUser = null;
@@ -128,10 +131,10 @@ export async function runSendFilter(
 
 		const renderedStrings = translation
 			? await renderLiquidStrings(
-					translation.strings,
+					coerceI18nVariables(translation.i18n_variables).in_template,
 					renderCtx,
 					logger,
-					`${templateName}.strings`,
+					`${templateName}.i18n_variables`,
 				)
 			: {};
 		const renderedBaseStrings = baseStrings
@@ -159,7 +162,7 @@ export async function runSendFilter(
 					...translation,
 					subject: renderedSubject,
 					from_name: renderedFromName,
-					strings: renderedStrings,
+					i18n_variables: renderedStrings,
 				}
 			: null;
 

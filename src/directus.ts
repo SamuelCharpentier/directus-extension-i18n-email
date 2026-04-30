@@ -11,6 +11,7 @@ import type {
 	EmailTemplateVariableRow,
 	RecipientUser,
 } from './types';
+import { coerceI18nVariables } from './reconcile';
 
 function normaliseLang(lang: unknown): string | null {
 	return typeof lang === 'string' && lang.length > 0 ? lang : null;
@@ -19,12 +20,15 @@ function normaliseLang(lang: unknown): string | null {
 /**
  * Endonym for a BCP-47 tag — i.e. the language's name written in its
  * own language, in the consistent "Language (Region)" form.
- *   `localizeLangCode('fr-CA') → "français (Canada)"`
+ *   `localizeLangCode('fr-CA') → "Français (Canada)"`
  *   `localizeLangCode('en-US') → "English (United States)"`
  *
  * Uses `languageDisplay: 'standard'` so every region renders
  * parenthesized (avoids the inconsistent dialect form, which mixes
  * "American English" / "français canadien" / "français (France)").
+ * The leading character is upper-cased so endonyms whose native form
+ * is lowercase (e.g. `français`) still read as proper nouns in the
+ * Directus language picker.
  *
  * Falls back to the raw code when `Intl.DisplayNames` rejects the
  * argument (e.g. malformed locale). The default fallback mode ('code')
@@ -37,10 +41,25 @@ export function localizeLangCode(code: string): string {
 			type: 'language',
 			languageDisplay: 'standard',
 		});
-		return dn.of(code) as string;
+		const raw = dn.of(code) as string;
+		return capitalizeFirst(raw, code);
 	} catch {
 		return code;
 	}
+}
+
+/**
+ * Upper-case the first character of `value` using the language's own
+ * locale rules so non-ASCII letters (e.g. `i` in Turkish) capitalize
+ * correctly. No-op when the first character is already upper-case or
+ * has no case (digit, punctuation).
+ */
+export function capitalizeFirst(value: string, locale?: string): string {
+	if (!value) return value;
+	const first = value.charAt(0);
+	const upper = locale ? first.toLocaleUpperCase(locale) : first.toUpperCase();
+	if (first === upper) return value;
+	return upper + value.slice(1);
 }
 
 export async function fetchDefaultLang(
@@ -136,7 +155,7 @@ export async function fetchTranslationRow(
  * language, falling back to the default language if needed. A
  * translation row is treated as "no usable translation" (and the
  * fallback chain continues) when its `subject` is empty AND its
- * `strings` map is null/undefined/empty — this is the empty
+ * `i18n_variables` map is null/undefined/empty — this is the empty
  * placeholder shape the bootstrap seeds for the project's default
  * language. Returns null when the template itself is missing; returns
  * `{ row, translation: null }` when the template exists but has no
@@ -145,12 +164,8 @@ export async function fetchTranslationRow(
 function isUsableTranslation(t: EmailTemplateTranslationRow | null): boolean {
 	if (!t) return false;
 	const hasSubject = typeof t.subject === 'string' && t.subject.length > 0;
-	const strings = t.strings;
-	const hasStrings =
-		strings !== null &&
-		strings !== undefined &&
-		typeof strings === 'object' &&
-		Object.keys(strings).length > 0;
+	const { in_template } = coerceI18nVariables(t.i18n_variables);
+	const hasStrings = Object.keys(in_template).length > 0;
 	return hasSubject || hasStrings;
 }
 

@@ -3,6 +3,7 @@ export const TRANSLATIONS_COLLECTION = 'email_template_translations';
 export const VARIABLES_COLLECTION = 'email_template_variables';
 export const SYNC_AUDIT_COLLECTION = 'email_template_sync_audit';
 export const LANGUAGES_COLLECTION = 'languages';
+export const USER_PREFS_COLLECTION = 'email_extension_user_prefs';
 
 export const SYSTEM_TEMPLATE_KEYS = [
 	'password-reset',

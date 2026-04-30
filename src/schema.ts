@@ -4,6 +4,7 @@ import {
 	VARIABLES_COLLECTION,
 	SYNC_AUDIT_COLLECTION,
 	LANGUAGES_COLLECTION,
+	USER_PREFS_COLLECTION,
 	TEMPLATE_CATEGORIES,
 } from './constants';
 
@@ -77,7 +78,7 @@ export const LANGUAGES_COLLECTION_PAYLOAD: CollectionPayload = {
 	collection: LANGUAGES_COLLECTION,
 	meta: {
 		icon: 'translate',
-		note: 'Languages available for email template translations. Picks from Directus\'s built-in language list.',
+		note: "Languages available for email template translations. Picks from Directus's built-in language list.",
 		display_template: '{{ name }}',
 		sort_field: 'code',
 	},
@@ -168,7 +169,7 @@ export const EMAIL_TEMPLATES_COLLECTION: CollectionPayload = {
 			field: 'body',
 			type: 'text',
 			meta: {
-				interface: 'input-code',
+				interface: 'body-i18n-aware',
 				options: { language: 'htmlmixed', lineNumber: true },
 				note: 'Full Liquid template (e.g. {% layout "base" %}{% block content %}…{% endblock %}).',
 				width: 'full',
@@ -179,7 +180,7 @@ export const EMAIL_TEMPLATES_COLLECTION: CollectionPayload = {
 			field: 'translations',
 			type: 'alias',
 			meta: {
-				interface: 'translations',
+				interface: 'translations-i18n-aware',
 				special: ['translations'],
 				options: {
 					languageField: 'name',
@@ -272,15 +273,18 @@ export const EMAIL_TEMPLATE_TRANSLATIONS_COLLECTION: CollectionPayload = {
 			schema: { is_nullable: true },
 		},
 		{
-			field: 'strings',
+			field: 'i18n_variables',
 			type: 'json',
 			meta: {
-				interface: 'input-code',
-				options: { language: 'JSON' },
-				note: 'Flat key→string map. Injected into Liquid as {{ i18n.* }}.',
+				interface: 'i18n-strings-editor',
+				note: 'i18n variables — auto-reconciled. `in_template` are referenced by the body; `unused` are kept for re-use.',
+				translations: [
+					{ language: 'en-US', translation: 'i18n_variables' },
+					{ language: 'fr-FR', translation: 'i18n_variables' },
+				],
 				width: 'full',
 			},
-			schema: { is_nullable: false, default_value: '{}' },
+			schema: { is_nullable: false, default_value: '{"in_template":{},"unused":{}}' },
 		},
 	],
 };
@@ -370,6 +374,44 @@ export const EMAIL_TEMPLATE_SYNC_AUDIT_COLLECTION: CollectionPayload = {
 	],
 };
 
+// ────────────────────────── email_extension_user_prefs ───────────────────────
+// One row per Directus user. PK is the user's uuid (no FK relation; the
+// row is created lazily by the i18n-variables interface when the user
+// first toggles a preference). Hidden from the navigation sidebar.
+export const EMAIL_EXTENSION_USER_PREFS_COLLECTION: CollectionPayload = {
+	collection: USER_PREFS_COLLECTION,
+	meta: {
+		icon: 'tune',
+		hidden: true,
+		note: 'Per-user UI preferences for the i18n email extension.',
+		display_template: '{{ user }}',
+	},
+	schema: { name: USER_PREFS_COLLECTION },
+	fields: [
+		{
+			field: 'user',
+			type: 'uuid',
+			meta: { interface: 'input', readonly: true, hidden: true },
+			schema: { is_primary_key: true, is_nullable: false, has_auto_increment: false },
+		},
+		{
+			field: 'auto_refresh_i18n_on_body_change',
+			type: 'boolean',
+			meta: {
+				interface: 'boolean',
+				// `cast-boolean` makes Directus normalise SQLite's 0/1
+				// integer storage to true/false on read; without it the
+				// admin boolean toggle renders unchecked even when the
+				// stored value is truthy.
+				special: ['cast-boolean'],
+				note: 'Automatically rebuild the i18n variables list when the body field loses focus.',
+				width: 'full',
+			},
+			schema: { default_value: false, is_nullable: false },
+		},
+	],
+};
+
 /** Order matters: parents first, then children that reference them. */
 export const ALL_COLLECTIONS: readonly CollectionPayload[] = [
 	LANGUAGES_COLLECTION_PAYLOAD,
@@ -377,6 +419,7 @@ export const ALL_COLLECTIONS: readonly CollectionPayload[] = [
 	EMAIL_TEMPLATE_TRANSLATIONS_COLLECTION,
 	EMAIL_TEMPLATE_VARIABLES_COLLECTION,
 	EMAIL_TEMPLATE_SYNC_AUDIT_COLLECTION,
+	EMAIL_EXTENSION_USER_PREFS_COLLECTION,
 ];
 
 /**

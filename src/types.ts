@@ -14,6 +14,17 @@ export type Logger = {
 /** Flat key→string map injected into Liquid as `{{ i18n.* }}`. */
 export type TranslationStrings = Record<string, string>;
 
+/**
+ * Unified shape stored in `email_template_translations.i18n_variables`.
+ * `in_template` = keys currently referenced by the parent template body.
+ * `unused` = keys preserved from previous edits (still hold their values
+ * in case the admin re-adds the variable to the body).
+ */
+export type I18nVariables = {
+	in_template: TranslationStrings;
+	unused: TranslationStrings;
+};
+
 export type EmailTemplateRow = {
 	id?: string;
 	template_key: string;
@@ -32,7 +43,13 @@ export type EmailTemplateTranslationRow = {
 	languages_code: string;
 	subject: string;
 	from_name: string | null;
-	strings: TranslationStrings;
+	/**
+	 * Stored shape is `I18nVariables`, but the row may arrive from the DB
+	 * driver as a JSON string (driver-dependent) or in the legacy
+	 * bare-key shape from older boots. Server-side reconcile coerces
+	 * to the canonical shape on every pass.
+	 */
+	i18n_variables: I18nVariables | TranslationStrings | string | null;
 };
 
 export type EmailTemplateVariableRow = {
@@ -62,7 +79,7 @@ export type SeedTranslation = {
 	languages_code: string;
 	subject: string;
 	from_name: string | null;
-	strings: TranslationStrings;
+	i18n_variables: TranslationStrings;
 };
 
 export type SeedVariable = {

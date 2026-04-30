@@ -11,6 +11,7 @@ export type ItemsServiceMock = {
 	readMany: (keys: (string | number)[], query?: any) => Promise<any[]>;
 	createOne: (data: any) => Promise<string | number>;
 	updateOne: (id: string | number, data: any) => Promise<string | number>;
+	deleteOne: (id: string | number) => Promise<string | number>;
 };
 
 export type CollectionItemsInit = {
@@ -122,6 +123,11 @@ export function makeServices(init: ServicesInit = {}): ServicesMock {
 					if (idx >= 0) rows()[idx] = { ...rows()[idx], ...data };
 					return id;
 				}),
+			deleteOne: async (id: string | number) => {
+				const idx = rows().findIndex((r) => String(r.id) === String(id));
+				if (idx >= 0) rows().splice(idx, 1);
+				return id;
+			},
 		};
 	}
 

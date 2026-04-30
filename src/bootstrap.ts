@@ -10,7 +10,7 @@ import {
 import { ALL_COLLECTIONS, ALL_RELATIONS } from './schema';
 import { SEED_TEMPLATES, SEED_TRANSLATIONS, SEED_VARIABLES } from './seeds';
 import { computeChecksum } from './integrity';
-import { fetchDefaultLang, localizeLangCode } from './directus';
+import { fetchDefaultLang, localizeLangCode, capitalizeFirst } from './directus';
 import { readTemplateFromDisk, syncTemplateBody } from './sync';
 
 let bootstrapRan = false;
@@ -85,12 +85,7 @@ async function migrateCollectionFields(
 		// real DB column. We never alter column types, so just warn the
 		// operator — they need to drop the stray column manually before
 		// queries against this collection will work.
-		if (
-			exists &&
-			field.type === 'alias' &&
-			current?.type &&
-			current.type !== 'alias'
-		) {
+		if (exists && field.type === 'alias' && current?.type && current.type !== 'alias') {
 			logger.warn(
 				`[i18n-email] Field ${payload.collection}.${field.field} is declared as alias but a real "${current.type}" column exists in the DB. Drop the column manually (e.g. via SQL) so this extension can register the o2m alias.`,
 			);
@@ -259,7 +254,93 @@ async function migrateRelationsMeta(
 }
 
 /**
- * Seed the `languages` collection. Strategy:
+ * One-shot, idempotent migration that renames the legacy
+ * `email_template_translations.strings` and `unused_strings` columns
+ * to their new names (`i18n_variables`, `unused_i18n_variables`).
+ *
+ * Runs BEFORE `migrateCollectionFields` because that step would
+ * otherwise see the new field defs as missing, create them as empty
+ * columns, and leave the legacy columns orphaned (data loss, since
+ * subsequent boots would never read from the old names again).
+ *
+ * Idempotent: queries `directus_fields` for the legacy names first
+ * and skips entirely when none are found.
+ */
+async function migrateColumnRename(
+	database: any,
+	services: ExtensionsServices,
+	schema: SchemaOverview,
+	logger: Pick<Logger, 'info' | 'warn'>,
+): Promise<void> {
+	if (!database || !database.schema) return;
+	const RENAMES: Array<[string, string]> = [
+		['strings', 'i18n_variables'],
+		['unused_strings', 'unused_i18n_variables'],
+	];
+	const fields = new services.ItemsService('directus_fields', {
+		schema,
+		accountability: null,
+	});
+	let stale: any[];
+	try {
+		stale = (await fields.readByQuery({
+			filter: {
+				collection: { _eq: TRANSLATIONS_COLLECTION },
+				field: { _in: RENAMES.map(([old]) => old) },
+			},
+			limit: -1,
+		})) as any[];
+	} catch (err) {
+		logger.warn(
+			`[i18n-email] Could not query directus_fields for legacy column rename: ${(err as Error).message}`,
+		);
+		return;
+	}
+	if (!stale || stale.length === 0) return;
+
+	for (const [oldName, newName] of RENAMES) {
+		const row = stale.find((r) => r.field === oldName);
+		if (!row) continue;
+		try {
+			let columnExists = true;
+			try {
+				if (typeof database.schema.hasColumn === 'function') {
+					columnExists = await database.schema.hasColumn(
+						TRANSLATIONS_COLLECTION,
+						oldName,
+					);
+				}
+			} catch {
+				columnExists = true;
+			}
+			if (columnExists) {
+				await database.schema.alterTable(TRANSLATIONS_COLLECTION, (t: any) => {
+					t.renameColumn(oldName, newName);
+				});
+				logger.info(
+					`[i18n-email] Renamed DB column ${TRANSLATIONS_COLLECTION}.${oldName} → ${newName}.`,
+				);
+			}
+			// Delete the legacy directus_fields row so migrateCollectionFields
+			// re-creates the new field definition cleanly on the next pass.
+			try {
+				if (row.id !== undefined && row.id !== null) {
+					await fields.deleteOne(row.id);
+				}
+			} catch (err) {
+				logger.warn(
+					`[i18n-email] Could not delete legacy directus_fields row for ${oldName}: ${(err as Error).message}`,
+				);
+			}
+		} catch (err) {
+			logger.warn(
+				`[i18n-email] Column rename failed for ${oldName} → ${newName}: ${(err as Error).message}`,
+			);
+		}
+	}
+}
+
+/**
  *   - If the collection already has rows, skip entirely (admin or a
  *     prior boot has populated it).
  *   - Otherwise insert one row for the project's default language
@@ -298,6 +379,49 @@ async function seedLanguages(
 		logger.info('[i18n-email] Seeded language en-US (English suggested copy fallback).');
 	}
 	return defaultLang;
+}
+
+/**
+ * Idempotent backfill that capitalizes the leading character of every
+ * `languages.name` whose endonym was seeded with a lowercase first
+ * letter (e.g. `français`, `日本語`-prefixed strings). Uses each row's
+ * own `code` for locale-aware upper-casing. Skipped on rows where the
+ * first character is already upper-case or has no casing.
+ */
+async function capitalizeLanguageNames(
+	services: ExtensionsServices,
+	schema: SchemaOverview,
+	logger: Pick<Logger, 'info' | 'warn'>,
+): Promise<void> {
+	const items = new services.ItemsService(LANGUAGES_COLLECTION, {
+		schema,
+		accountability: null,
+	});
+	let rows: Array<{ code: string; name?: string | null }>;
+	try {
+		rows = (await items.readByQuery({ limit: -1 })) as Array<{
+			code: string;
+			name?: string | null;
+		}>;
+	} catch (err) {
+		logger.warn(
+			`[i18n-email] Could not read languages for capitalization backfill: ${(err as Error).message}`,
+		);
+		return;
+	}
+	for (const row of rows) {
+		if (!row || typeof row.name !== 'string' || row.name.length === 0) continue;
+		const fixed = capitalizeFirst(row.name, row.code);
+		if (fixed === row.name) continue;
+		try {
+			await items.updateOne(row.code, { name: fixed });
+			logger.info(`[i18n-email] Capitalized language name ${row.code}: ${fixed}.`);
+		} catch (err) {
+			logger.warn(
+				`[i18n-email] Could not update language ${row.code} name: ${(err as Error).message}`,
+			);
+		}
+	}
 }
 
 /**
@@ -360,7 +484,7 @@ async function seedTemplates(
 /**
  * Seed translation rows. For each protected template:
  *   - Insert one empty row for the project's default language
- *     (`subject: ''`, `from_name: null`, `strings: {}`) so admins fill
+ *     (`subject: ''`, `from_name: null`, `i18n_variables: {}`) so admins fill
  *     in their primary-language copy themselves.
  *   - If the default is not `en-US`, also insert the English
  *     suggested-copy row from `SEED_TRANSLATIONS` so there's a
@@ -384,7 +508,11 @@ async function seedTranslations(
 	async function upsert(
 		templateKey: string,
 		languagesCode: string,
-		payload: { subject: string; from_name: string | null; strings: Record<string, string> },
+		payload: {
+			subject: string;
+			from_name: string | null;
+			i18n_variables: Record<string, string>;
+		},
 		label: string,
 	): Promise<void> {
 		const parent = byKey.get(templateKey);
@@ -415,7 +543,7 @@ async function seedTranslations(
 		await upsert(
 			tpl.template_key,
 			defaultLang,
-			{ subject: '', from_name: null, strings: {} },
+			{ subject: '', from_name: null, i18n_variables: {} },
 			'empty default-lang placeholder',
 		);
 		// English suggested copy when the default is not English.
@@ -425,7 +553,11 @@ async function seedTranslations(
 				await upsert(
 					tpl.template_key,
 					'en-US',
-					{ subject: seed.subject, from_name: seed.from_name, strings: seed.strings },
+					{
+						subject: seed.subject,
+						from_name: seed.from_name,
+						i18n_variables: seed.i18n_variables,
+					},
 					'English suggested copy',
 				);
 			}
@@ -475,6 +607,7 @@ export async function runBootstrap(
 	getSchema: () => Promise<SchemaOverview>,
 	env: Record<string, unknown>,
 	logger: Pick<Logger, 'info' | 'warn' | 'error'>,
+	database?: any,
 ): Promise<void> {
 	if (bootstrapRan) return;
 	if (bootstrapInFlight) return bootstrapInFlight;
@@ -487,6 +620,10 @@ export async function runBootstrap(
 				await createCollectionIfMissing(payload, services, schema, logger);
 			}
 			schema = await getSchema();
+			// Rename legacy columns BEFORE migrateCollectionFields would
+			// otherwise see them as missing and create them empty.
+			await migrateColumnRename(database, services, schema, logger);
+			schema = await getSchema();
 			for (const payload of ALL_COLLECTIONS) {
 				await migrateCollectionFields(payload, services, schema, logger);
 			}
@@ -496,6 +633,7 @@ export async function runBootstrap(
 			await migrateRelationsMeta(services, schema, logger);
 			schema = await getSchema();
 			const defaultLang = await seedLanguages(services, schema, env, logger);
+			await capitalizeLanguageNames(services, schema, logger);
 			const templateRows = await seedTemplates(templatesPath, services, schema, logger);
 			await seedTranslations(templateRows, defaultLang, services, schema, logger);
 			await seedVariables(services, schema, logger);

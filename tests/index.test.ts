@@ -58,6 +58,7 @@ describe('hook registration', () => {
 		expect(handlers.filters['email_templates.items.create']).toBeTypeOf('function');
 		expect(handlers.filters['email_templates.items.update']).toBeTypeOf('function');
 		expect(handlers.filters['email_templates.items.delete']).toBeTypeOf('function');
+		expect(handlers.filters['email_template_translations.items.create']).toBeTypeOf('function');
 		expect(handlers.filters['email_template_variables.items.delete']).toBeTypeOf('function');
 		expect(handlers.inits['app.after']).toBeTypeOf('function');
 	});
@@ -109,7 +110,7 @@ describe('hook registration', () => {
 			code: 'fr-FR',
 		})) as any;
 		expect(out.code).toBe('fr-FR');
-		expect(out.name).toBe('français (France)');
+		expect(out.name).toBe('Français (France)');
 	});
 
 	it('languages.items.create skips when code missing or name already set', async () => {
@@ -303,6 +304,35 @@ describe('hook registration', () => {
 		expect(__INTERNAL__.ran).toBe(true);
 	});
 
+	it('swallows init() throw (older Directus versions without app.after)', async () => {
+		// Older Directus releases lack `init('app.after', ...)`. The hook
+		// must register everything else when init throws.
+		const filterFn = vi.fn();
+		const actionFn = vi.fn();
+		const initFn = vi.fn(() => {
+			throw new Error('no app.after');
+		});
+		const logger = makeLogger();
+		const services = makeServices();
+		const getSchema = async () => makeSchema();
+		expect(() =>
+			(hook as any)(
+				{
+					filter: filterFn,
+					action: actionFn,
+					init: initFn,
+					schedule: vi.fn(),
+					embed: vi.fn(),
+				},
+				{ services, logger, getSchema, env: { EMAIL_TEMPLATES_PATH: dir } },
+			),
+		).not.toThrow();
+		// init was attempted but threw → hook proceeded to register the rest.
+		expect(initFn).toHaveBeenCalledWith('app.after', expect.any(Function));
+		expect(actionFn).toHaveBeenCalledWith('server.start', expect.any(Function));
+		expect(filterFn).toHaveBeenCalledWith('email.send', expect.any(Function));
+	});
+
 	it('create action falls back to row.id and empty body when key/body missing', async () => {
 		// Exercises the falsy branches:
 		//   id:   key ? String(key) : row.id   (no `key` in meta)
@@ -330,5 +360,143 @@ describe('hook registration', () => {
 		// so the body/template_key guard is skipped and readMany runs.
 		await handlers.actions['email_templates.items.update']!({ keys: ['1'] });
 		expect(await readFile(join(dir, 'p.liquid'), 'utf-8')).toBe('pb');
+	});
+
+	// ──────────── translation create filter (i18n var pre-fill) ────────────
+	it('translations create filter pre-fills strings from parent body', async () => {
+		const { handlers, services } = register({ EMAIL_TEMPLATES_PATH: dir });
+		services._stores.email_templates = [
+			{
+				id: 'tpl-1',
+				template_key: 'password-reset',
+				body: '{{ i18n.heading }} {{ i18n.body }}',
+			},
+		];
+		const out = (await handlers.filters['email_template_translations.items.create']!({
+			email_templates_id: 'tpl-1',
+			languages_code: 'en-US',
+		})) as any;
+		expect(out.i18n_variables).toEqual({ in_template: { heading: '', body: '' }, unused: {} });
+	});
+
+	it('translations create filter preserves caller-supplied strings', async () => {
+		const { handlers, services } = register({ EMAIL_TEMPLATES_PATH: dir });
+		services._stores.email_templates = [
+			{ id: 'tpl-1', template_key: 'p', body: '{{ i18n.heading }}' },
+		];
+		const out = (await handlers.filters['email_template_translations.items.create']!({
+			email_templates_id: 'tpl-1',
+			i18n_variables: { custom: 'value' },
+		})) as any;
+		expect(out.i18n_variables).toEqual({ in_template: { custom: 'value' }, unused: {} });
+	});
+
+	it('translations create filter accepts caller-supplied new shape', async () => {
+		const { handlers, services } = register({ EMAIL_TEMPLATES_PATH: dir });
+		services._stores.email_templates = [
+			{ id: 'tpl-1', template_key: 'p', body: '{{ i18n.heading }}' },
+		];
+		const out = (await handlers.filters['email_template_translations.items.create']!({
+			email_templates_id: 'tpl-1',
+			i18n_variables: { in_template: { custom: 'value' }, unused: { kept: 'k' } },
+		})) as any;
+		expect(out.i18n_variables).toEqual({
+			in_template: { custom: 'value' },
+			unused: { kept: 'k' },
+		});
+	});
+
+	it('translations create filter coerces JSON-string input', async () => {
+		const { handlers, services } = register({ EMAIL_TEMPLATES_PATH: dir });
+		services._stores.email_templates = [
+			{ id: 'tpl-1', template_key: 'p', body: '{{ i18n.heading }}' },
+		];
+		const out = (await handlers.filters['email_template_translations.items.create']!({
+			email_templates_id: 'tpl-1',
+			i18n_variables: '{"custom":"value"}',
+		})) as any;
+		expect(out.i18n_variables).toEqual({ in_template: { custom: 'value' }, unused: {} });
+	});
+
+	it('translations create filter no-op when parent id missing', async () => {
+		const { handlers } = register({ EMAIL_TEMPLATES_PATH: dir });
+		const out = (await handlers.filters['email_template_translations.items.create']!({
+			languages_code: 'en-US',
+		})) as any;
+		expect(out).toEqual({ languages_code: 'en-US' });
+	});
+
+	it('translations create filter falls back to empty maps when parent missing', async () => {
+		const { handlers } = register({ EMAIL_TEMPLATES_PATH: dir });
+		// no email_templates row exists for this id
+		const out = (await handlers.filters['email_template_translations.items.create']!({
+			email_templates_id: 'missing',
+		})) as any;
+		expect(out.i18n_variables).toEqual({ in_template: {}, unused: {} });
+	});
+
+	it('translations create filter warns when getSchema throws', async () => {
+		const { handlers, logger } = register(
+			{ EMAIL_TEMPLATES_PATH: dir },
+			{
+				getSchema: async () => {
+					throw new Error('schema-down');
+				},
+			},
+		);
+		const out = (await handlers.filters['email_template_translations.items.create']!({
+			email_templates_id: 'tpl-1',
+		})) as any;
+		expect(out.i18n_variables).toEqual({ in_template: {}, unused: {} });
+		expect(logger.warn).toHaveBeenCalledWith(
+			expect.stringContaining('Translation pre-fill skipped'),
+		);
+	});
+
+	// ──────────── reconcile invocation in template create/update actions ────────────
+	it('create action also reconciles existing translation rows', async () => {
+		const { handlers, services } = register({ EMAIL_TEMPLATES_PATH: dir });
+		// Pre-existing translation row attached to the template being created.
+		services._stores.email_template_translations = [
+			{
+				id: 't1',
+				email_templates_id: 'tpl-1',
+				languages_code: 'en-US',
+				i18n_variables: { in_template: { stale: 'X' }, unused: {} },
+			},
+		];
+		await handlers.actions['email_templates.items.create']!({
+			key: 'tpl-1',
+			payload: { template_key: 'pr', body: '{{ i18n.heading }}' },
+		});
+		const t1 = services._stores.email_template_translations!.find((r: any) => r.id === 't1');
+		expect(t1.i18n_variables).toEqual({
+			in_template: { heading: '' },
+			unused: { stale: 'X' },
+		});
+	});
+
+	it('update action reconciles when body changes', async () => {
+		const { handlers, services } = register({ EMAIL_TEMPLATES_PATH: dir });
+		services._stores.email_templates = [
+			{ id: '1', template_key: 'pr', body: '{{ i18n.body }}' },
+		];
+		services._stores.email_template_translations = [
+			{
+				id: 't1',
+				email_templates_id: '1',
+				languages_code: 'en-US',
+				i18n_variables: { in_template: { heading: 'H', orphan: 'O' }, unused: {} },
+			},
+		];
+		await handlers.actions['email_templates.items.update']!({
+			keys: ['1'],
+			payload: { body: '{{ i18n.body }}' },
+		});
+		const t1 = services._stores.email_template_translations!.find((r: any) => r.id === 't1');
+		expect(t1.i18n_variables).toEqual({
+			in_template: { body: '' },
+			unused: { heading: 'H', orphan: 'O' },
+		});
 	});
 });
