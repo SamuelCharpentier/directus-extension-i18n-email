@@ -3,7 +3,7 @@ import { computed, inject, onBeforeUnmount, onMounted, ref, type Ref } from 'vue
 import { useApi } from '@directus/extensions-sdk';
 import { extractI18nKeys } from '../liquid';
 import { dlog } from './debug';
-import { dispatchReconcile } from './i18nBus';
+import { dispatchReconcile, clearLastBroadcast } from './i18nBus';
 
 /**
  * Wrapper around Directus's standard `translations` interface used on
@@ -229,6 +229,14 @@ function onBodyBlur(ev: Event): void {
 
 onMounted(async () => {
 	dlog(`${LOG} mounted`);
+	// Drop any broadcast cached by a previously-open template form.
+	// Without this, the JsonInterface instances about to mount on
+	// this form's language tabs would catch up to the prior
+	// template's keys via getLastBroadcast() and reclassify their
+	// freshly-loaded rows against the wrong key set — demoting every
+	// real key into `unused` and seeding empty entries for keys that
+	// belong to a different template.
+	clearLastBroadcast();
 	if (typeof window !== 'undefined') {
 		window.addEventListener('i18n-email:body-snapshot', onBodySnapshot);
 		window.addEventListener('i18n-email:body-blur', onBodyBlur);
