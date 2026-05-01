@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, inject, onBeforeUnmount, onMounted, ref, type Ref } from 'vue';
 import { useApi } from '@directus/extensions-sdk';
 import { extractI18nKeys } from '../liquid';
 import { dlog } from './debug';
-import { dispatchReconcile } from './i18nBus';
+import { dispatchReconcile, clearLastBroadcast } from './i18nBus';
 
 /**
  * Wrapper around Directus's standard `translations` interface used on
@@ -75,6 +75,26 @@ const refreshError = ref<string | null>(null);
 const lastSummary = ref<string | null>(null);
 
 /**
+ * The parent row's `template_key`. Drives `extractI18nKeys`'s
+ * base-vs-non-base branching: the `base` layout's body references
+ * `i18n.base.*` (so the row's stored map is keyed without the
+ * `base.` prefix), while every other template uses bare `i18n.*`
+ * paths.
+ *
+ * Sourced primarily from Directus's injected `values` ref (the
+ * parent edit form's live record). Falls back to a one-shot API
+ * fetch when `values` isn't available (e.g. running outside the
+ * standard form layout) or the field hasn't been merged in yet.
+ */
+const formValues = inject<Ref<Record<string, unknown>> | undefined>('values', undefined);
+const apiTemplateKey = ref<string>('');
+const templateKey = computed<string>(() => {
+	const fromForm = formValues?.value?.template_key;
+	if (typeof fromForm === 'string' && fromForm.length > 0) return fromForm;
+	return apiTemplateKey.value;
+});
+
+/**
  * Latest body string we've seen via `i18n-email:body-snapshot`. If
  * the user clicks Refresh before any snapshot has arrived (rare —
  * snapshots fire on every keystroke), we fall back to an empty
@@ -88,7 +108,9 @@ const LOG = '[i18n-email/translations]';
 function broadcastFromBody(reason: 'manual' | 'blur'): void {
 	if (props.disabled) return;
 	refreshError.value = null;
-	const keys = extractI18nKeys(lastBody.value, 'translations-interface', noopWarn);
+	const tk = templateKey.value;
+	dlog(`${LOG} ${reason} extract: templateKey="${tk}" bodyLen=${lastBody.value.length}`);
+	const keys = extractI18nKeys(lastBody.value, tk, noopWarn);
 	dlog(`${LOG} ${reason} broadcast: ${keys.size} key(s)`, Array.from(keys));
 	dispatchReconcile(keys);
 	if (reason === 'manual') {
@@ -99,10 +121,51 @@ function broadcastFromBody(reason: 'manual' | 'blur'): void {
 	}
 }
 
-function onClickRefresh(): void {
+/**
+ * Pull a fresh body snapshot from `BodyInterface` before broadcasting.
+ * Refresh always asks for the current body and waits for the reply,
+ * so we never extract keys from a stale `lastBody`. Rejects on
+ * timeout (e.g. admin swapped the body field's interface away from
+ * `body-i18n-aware`); the caller surfaces that as a refresh error
+ * rather than silently broadcasting an empty key set and demoting
+ * every `in_template` entry to `unused`.
+ */
+function awaitFreshBody(timeoutMs = 1000): Promise<void> {
+	if (typeof window === 'undefined') return Promise.resolve();
+	return new Promise<void>((resolve, reject) => {
+		let done = false;
+		const cleanup = (): void => {
+			window.removeEventListener('i18n-email:body-snapshot', listener);
+			clearTimeout(timer);
+		};
+		const listener = (ev: Event): void => {
+			if (done) return;
+			done = true;
+			const detail = (ev as CustomEvent<{ body?: string }>).detail;
+			if (typeof detail?.body === 'string') lastBody.value = detail.body;
+			cleanup();
+			resolve();
+		};
+		const timer = window.setTimeout(() => {
+			if (done) return;
+			done = true;
+			cleanup();
+			reject(
+				new Error(
+					'No body interface responded — configure the body field to use the i18n-aware body interface.',
+				),
+			);
+		}, timeoutMs);
+		window.addEventListener('i18n-email:body-snapshot', listener);
+		window.dispatchEvent(new CustomEvent('i18n-email:body-request'));
+	});
+}
+
+async function onClickRefresh(): Promise<void> {
 	if (refreshing.value) return;
 	refreshing.value = true;
 	try {
+		await awaitFreshBody();
 		broadcastFromBody('manual');
 	} catch (err) {
 		refreshError.value = err instanceof Error ? err.message : 'Refresh failed.';
@@ -166,9 +229,44 @@ function onBodyBlur(ev: Event): void {
 
 onMounted(async () => {
 	dlog(`${LOG} mounted`);
+	// Drop any broadcast cached by a previously-open template form.
+	// Without this, the JsonInterface instances about to mount on
+	// this form's language tabs would catch up to the prior
+	// template's keys via getLastBroadcast() and reclassify their
+	// freshly-loaded rows against the wrong key set — demoting every
+	// real key into `unused` and seeding empty entries for keys that
+	// belong to a different template.
+	clearLastBroadcast();
 	if (typeof window !== 'undefined') {
 		window.addEventListener('i18n-email:body-snapshot', onBodySnapshot);
 		window.addEventListener('i18n-email:body-blur', onBodyBlur);
+	}
+	// Resolve template_key for base-vs-non-base key extraction. The
+	// computed `templateKey` prefers the injected `values` ref (live
+	// form state); this API fetch is the fallback for cases where
+	// `values` is empty or absent. Done once on mount: the field is
+	// the row's natural key and never changes after creation. New
+	// unsaved rows have no primaryKey yet, so we skip.
+	if (
+		!templateKey.value &&
+		props.collection &&
+		props.primaryKey !== undefined &&
+		props.primaryKey !== null &&
+		props.primaryKey !== '+'
+	) {
+		try {
+			const row = await api.get(
+				`/items/${props.collection}/${encodeURIComponent(String(props.primaryKey))}`,
+				{ params: { fields: 'template_key' } },
+			);
+			const key = row?.data?.data?.template_key;
+			if (typeof key === 'string') apiTemplateKey.value = key;
+			dlog(`${LOG} api template_key="${apiTemplateKey.value}"`);
+		} catch (err) {
+			dlog(`${LOG} api template_key fetch failed`, err);
+		}
+	} else {
+		dlog(`${LOG} templateKey from values="${templateKey.value}"`);
 	}
 	try {
 		const me = await api.get('/users/me', { params: { fields: 'id' } });

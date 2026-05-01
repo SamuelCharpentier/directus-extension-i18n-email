@@ -31,6 +31,18 @@ export function getLastBroadcast(): Broadcast | null {
 }
 
 /**
+ * Forget the cached broadcast. Called by `TranslationsInterface` on
+ * mount so a freshly-opened template form's lazy-mounted
+ * `JsonInterface` instances don't catch up to a stale broadcast
+ * from the previously-open template — which would demote every
+ * real key into `unused` and seed empty entries for keys belonging
+ * to the prior template.
+ */
+export function clearLastBroadcast(): void {
+	lastBroadcast = null;
+}
+
+/**
  * Fire a reconcile broadcast. The bus's own self-listener (registered
  * at module load) catches it and updates `lastBroadcast` — so callers
  * never need to update internal state directly.

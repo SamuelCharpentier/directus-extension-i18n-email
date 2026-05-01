@@ -11,6 +11,7 @@
  * actually lives.
  */
 
+import { onBeforeUnmount, onMounted } from 'vue';
 import { dlog } from './debug';
 
 const props = withDefaults(
@@ -62,6 +63,28 @@ function onFocusOut(): void {
 	dlog(`${LOG} dispatch i18n-email:body-blur len=${body.length}`);
 	window.dispatchEvent(new CustomEvent('i18n-email:body-blur', { detail: { body } }));
 }
+
+/**
+ * Listener for `i18n-email:body-request` — replies by re-emitting the
+ * current body via the standard `body-snapshot` event. Lets
+ * `TranslationsInterface.onClickRefresh` pull a fresh snapshot before
+ * extracting i18n keys, so the very-first Refresh on a page load (no
+ * prior body input) doesn't see an empty `lastBody` and accidentally
+ * demote every key into `unused`.
+ */
+function onBodyRequest(): void {
+	dispatchSnapshot(typeof props.value === 'string' ? props.value : '');
+}
+
+onMounted(() => {
+	if (typeof window === 'undefined') return;
+	window.addEventListener('i18n-email:body-request', onBodyRequest);
+});
+
+onBeforeUnmount(() => {
+	if (typeof window === 'undefined') return;
+	window.removeEventListener('i18n-email:body-request', onBodyRequest);
+});
 </script>
 
 <template>
