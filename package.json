@@ -1,7 +1,7 @@
 {
 	"name": "directus-extension-i18n-email",
-	"version": "0.0.1",
-	"description": "Directus CMS extension to translate emails (password reset, user registration and invitation)",
+	"version": "1.0.0",
+	"description": "Directus CMS extension to translate both system emails (password reset, user registration and invitation) and custom emails.",
 	"author": {
 		"email": "scharpentier0@gmail.com",
 		"name": "Samuel Charpentier"
