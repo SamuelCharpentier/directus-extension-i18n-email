@@ -3,7 +3,12 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { makeServices, makeLogger, makeSchema } from './helpers';
-import { readTemplateFromDisk, syncTemplateBody, templateFilePath, deleteTemplateFile } from '../src/sync';
+import {
+	readTemplateFromDisk,
+	syncTemplateBody,
+	templateFilePath,
+	deleteTemplateFile,
+} from '../src/sync';
 
 describe('sync', () => {
 	let dir: string;
@@ -211,7 +216,9 @@ describe('sync', () => {
 			const logger = makeLogger();
 			await deleteTemplateFile(dir, 'gone', logger);
 			expect(await readTemplateFromDisk(dir, 'gone')).toBeNull();
-			expect(logger.info).toHaveBeenCalledWith(expect.stringContaining('Removed gone.liquid'));
+			expect(logger.info).toHaveBeenCalledWith(
+				expect.stringContaining('Removed gone.liquid'),
+			);
 		});
 
 		it('silently tolerates missing file (ENOENT)', async () => {
