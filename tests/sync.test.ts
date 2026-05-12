@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { makeServices, makeLogger, makeSchema } from './helpers';
-import { readTemplateFromDisk, syncTemplateBody, templateFilePath } from '../src/sync';
+import { readTemplateFromDisk, syncTemplateBody, templateFilePath, deleteTemplateFile } from '../src/sync';
 
 describe('sync', () => {
 	let dir: string;
@@ -203,6 +203,43 @@ describe('sync', () => {
 		);
 		// no throw, logger.info fired
 		expect(logger.info).toHaveBeenCalled();
+	});
+
+	describe('deleteTemplateFile', () => {
+		it('removes existing file and logs info', async () => {
+			await writeFile(join(dir, 'gone.liquid'), 'x', 'utf-8');
+			const logger = makeLogger();
+			await deleteTemplateFile(dir, 'gone', logger);
+			expect(await readTemplateFromDisk(dir, 'gone')).toBeNull();
+			expect(logger.info).toHaveBeenCalledWith(expect.stringContaining('Removed gone.liquid'));
+		});
+
+		it('silently tolerates missing file (ENOENT)', async () => {
+			const logger = makeLogger();
+			await deleteTemplateFile(dir, 'nope', logger);
+			expect(logger.warn).not.toHaveBeenCalled();
+			expect(logger.info).not.toHaveBeenCalled();
+		});
+
+		it('no-ops when templatesPath is empty', async () => {
+			const logger = makeLogger();
+			await deleteTemplateFile('', 'whatever', logger);
+			expect(logger.info).not.toHaveBeenCalled();
+			expect(logger.warn).not.toHaveBeenCalled();
+		});
+
+		it('warns on non-ENOENT failure', async () => {
+			const logger = makeLogger();
+			// Passing a directory path to unlink yields EISDIR/EPERM, not ENOENT.
+			const sub = join(dir, 'as-dir');
+			await mkdir(sub);
+			await writeFile(join(sub, 'k.liquid'), 'x', 'utf-8'); // ensure non-empty dir
+			// templateFilePath builds `${dir}/${key}.liquid`; aim it at the directory itself.
+			// Trick: pass key whose .liquid suffix resolves to an existing directory.
+			await mkdir(join(dir, 'isdir.liquid'));
+			await deleteTemplateFile(dir, 'isdir', logger);
+			expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('Failed to remove'));
+		});
 	});
 });
 

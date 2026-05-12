@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { ExtensionsServices, SchemaOverview } from '@directus/types';
 import type { EmailTemplateRow, Logger } from './types';
@@ -31,6 +31,31 @@ export async function readTemplateFromDisk(
 		return await readFile(templateFilePath(templatesPath, templateKey), 'utf-8');
 	} catch {
 		return null;
+	}
+}
+
+/**
+ * Remove a template body file from disk. Missing files are tolerated
+ * (the row may have been created without ever being synced to disk,
+ * or the file was already removed out-of-band). All other failures
+ * are logged but never thrown — the row delete already succeeded and
+ * we don't want a stale-handle / permission error to leak back to
+ * the admin UI as a request failure.
+ */
+export async function deleteTemplateFile(
+	templatesPath: string,
+	templateKey: string,
+	logger: Pick<Logger, 'info' | 'warn'>,
+): Promise<void> {
+	if (!templatesPath) return;
+	const target = templateFilePath(templatesPath, templateKey);
+	try {
+		await unlink(target);
+		logger.info(`[i18n-email] Removed ${templateKey}.liquid.`);
+	} catch (err) {
+		const code = (err as NodeJS.ErrnoException).code;
+		if (code === 'ENOENT') return;
+		logger.warn(`[i18n-email] Failed to remove ${target}: ${(err as Error).message}`);
 	}
 }
 

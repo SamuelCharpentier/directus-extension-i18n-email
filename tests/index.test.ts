@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { mkdtemp, rm, readFile } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import hook from '../src/index';
@@ -181,6 +181,27 @@ describe('hook registration', () => {
 	it('variables delete filter no-op on empty', async () => {
 		const { handlers } = register();
 		expect(await handlers.filters['email_template_variables.items.delete']!([])).toEqual([]);
+	});
+
+	it('templates delete action removes .liquid files for captured ids', async () => {
+		const { handlers, services } = register({ EMAIL_TEMPLATES_PATH: dir });
+		// Seed a row and a matching file on disk.
+		services._stores.email_templates = [
+			{ id: '7', template_key: 'doomed', is_protected: false },
+		];
+		await writeFile(join(dir, 'doomed.liquid'), 'bye', 'utf-8');
+		// Run delete filter to capture mapping, then paired action.
+		await handlers.filters['email_templates.items.delete']!(['7']);
+		expect(handlers.actions['email_templates.items.delete']).toBeTypeOf('function');
+		await handlers.actions['email_templates.items.delete']!({ keys: ['7'] });
+		await expect(readFile(join(dir, 'doomed.liquid'), 'utf-8')).rejects.toBeTruthy();
+	});
+
+	it('templates delete action skips unknown / undrained ids', async () => {
+		const { handlers } = register({ EMAIL_TEMPLATES_PATH: dir });
+		// No filter call means map is empty — action must no-op cleanly.
+		await handlers.actions['email_templates.items.delete']!({ keys: ['nope'] });
+		await handlers.actions['email_templates.items.delete']!({});
 	});
 
 	it('email.send filter proxies to runSendFilter', async () => {

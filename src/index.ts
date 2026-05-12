@@ -1,7 +1,7 @@
 import type { EmailOptions, HookConfig } from '@directus/types';
 import { runBootstrap } from './bootstrap';
 import { runSendFilter } from './send';
-import { syncTemplateBody } from './sync';
+import { syncTemplateBody, deleteTemplateFile } from './sync';
 import {
 	LANGUAGES_COLLECTION,
 	TEMPLATES_COLLECTION,
@@ -34,6 +34,13 @@ const hook: HookConfig = (
 	{ services, logger, getSchema, env, database },
 ) => {
 	logger.info('[i18n-email] Hook registered.');
+
+	// Captured during the delete filter (after the protection check
+	// passes), drained by the paired delete action. Keyed by row id so
+	// concurrent batched deletes don't trample each other. Entries
+	// that never get drained (e.g. the DB delete failed downstream)
+	// are harmless — the next delete of the same id overwrites them.
+	const pendingFileDeletes = new Map<string, string>();
 
 	// Bootstrap is intentionally fire-and-forget so it does NOT block
 	// Directus's startup pipeline. On a fresh DB the work (collection
@@ -198,7 +205,7 @@ const hook: HookConfig = (
 		});
 		const rows = (await items.readMany(ids, {
 			fields: ['id', 'template_key', 'is_protected'],
-		})) as Array<Pick<EmailTemplateRow, 'template_key' | 'is_protected'>>;
+		})) as Array<Pick<EmailTemplateRow, 'id' | 'template_key' | 'is_protected'>>;
 		const blocked = rows.filter((r) => r.is_protected);
 		if (blocked.length > 0) {
 			const keys = blocked.map((r) => r.template_key).join(', ');
@@ -206,7 +213,24 @@ const hook: HookConfig = (
 				`[i18n-email] Cannot delete protected template row(s): ${keys}. Protected rows can be edited but not removed.`,
 			);
 		}
+		// Stash template_keys so the paired action hook can remove the
+		// matching .liquid files once the DB delete succeeds.
+		for (const r of rows) {
+			if (r.id && r.template_key) pendingFileDeletes.set(String(r.id), r.template_key);
+		}
 		return payload;
+	});
+
+	action(`${TEMPLATES_COLLECTION}.items.delete`, async (meta: unknown) => {
+		const keys = ((meta as { keys?: (string | number)[] }).keys ?? []).map(String);
+		if (keys.length === 0) return;
+		const templatesPath = templatesPathFromEnv(env);
+		for (const id of keys) {
+			const templateKey = pendingFileDeletes.get(id);
+			pendingFileDeletes.delete(id);
+			if (!templateKey) continue;
+			await deleteTemplateFile(templatesPath, templateKey, logger);
+		}
 	});
 
 	filter(`${VARIABLES_COLLECTION}.items.delete`, async (payload: unknown) => {
