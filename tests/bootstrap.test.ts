@@ -205,28 +205,127 @@ describe('runBootstrap', () => {
 		expect(logger.info).toHaveBeenCalledWith(expect.stringContaining('already populated'));
 	});
 
-	it('seeds project default + en-US when default differs from en-US', async () => {
+	it('adds nothing to a populated languages collection, and skips translation seeds whose language is missing', async () => {
+		// Simulates the 21:13 prod failure: languages was previously
+		// seeded/admin-managed without the current project default, so
+		// it is populated but lacks it. Bootstrap must neither touch
+		// languages nor abort with INVALID_FOREIGN_KEY.
+		const s = makeServices({
+			settings: { readSingleton: async () => ({ default_language: 'fr-CA' }) },
+			items: {
+				languages: {
+					rows: [{ code: 'en-US', name: 'English' }],
+				},
+			},
+		});
+		const logger = makeLogger();
+		await runBootstrap(dir, s as any, getSchema, {}, logger);
+		// Languages untouched — admin-owned once populated; fr-CA must
+		// NOT be added.
+		expect(s._stores.languages?.map((r: any) => r.code)).toEqual(['en-US']);
+		// en-US translation rows still seeded; fr-CA placeholder rows
+		// skipped (language missing) instead of violating the FK.
+		const trans = s._stores.email_template_translations ?? [];
+		expect(trans.length).toBe(5);
+		expect(new Set(trans.map((r: any) => r.languages_code))).toEqual(new Set(['en-US']));
+		expect(logger.warn).toHaveBeenCalledWith(
+			expect.stringContaining('Skipping translation seed for base/fr-CA'),
+		);
+		expect(logger.info).not.toHaveBeenCalledWith(
+			expect.stringContaining('Seeded translation base/fr-CA'),
+		);
+		expect(logger.info).toHaveBeenCalledWith(expect.stringContaining('Bootstrap completed.'));
+	});
+
+	it('skips translation seeds when the languages lookup itself fails', async () => {
+		const s = makeServices({
+			items: {
+				languages: {
+					rows: [{ code: 'en-US', name: 'English' }],
+				},
+			},
+		});
+		// The bulk languages seed passed (rows exist), but the per-code
+		// verification lookup in seedTranslations fails.
+		let firstRead = true;
+		const originalItemsService = (s as any).ItemsService;
+		(s as any).ItemsService = function (name: string, opts: any) {
+			const svc = originalItemsService(name, opts);
+			if (name === 'languages') {
+				const originalRead = svc.readByQuery;
+				svc.readByQuery = async (query?: any) => {
+					// Let the bulk seed's `limit: 1` read hit the store so
+					// the skip path is exercised, but fail the filtered
+					// per-language verification reads.
+					if (firstRead && query?.filter == null) {
+						firstRead = false;
+						return originalRead(query);
+					}
+					throw new Error('nope');
+				};
+			}
+			return svc;
+		};
+		const logger = makeLogger();
+		await runBootstrap(dir, s as any, getSchema, {}, logger);
+		expect(logger.warn).toHaveBeenCalledWith(
+			expect.stringContaining('Could not verify language'),
+		);
+		expect(s._stores.email_template_translations?.length ?? 0).toBe(0);
+		expect(logger.info).toHaveBeenCalledWith(expect.stringContaining('Bootstrap completed.'));
+	});
+
+	it('skips a translation seed whose insert fails instead of aborting bootstrap', async () => {
+		const s = makeServices();
+		const originalItemsService = (s as any).ItemsService;
+		(s as any).ItemsService = function (name: string, opts: any) {
+			const svc = originalItemsService(name, opts);
+			if (name === 'email_template_translations') {
+				svc.createOne = async () => {
+					throw new Error('Invalid foreign key');
+				};
+			}
+			return svc;
+		};
+		const logger = makeLogger();
+		await runBootstrap(dir, s as any, getSchema, {}, logger);
+		expect(logger.warn).toHaveBeenCalledWith(
+			expect.stringContaining('Skipping translation seed for base/en-US'),
+		);
+		expect(logger.info).toHaveBeenCalledWith(expect.stringContaining('Bootstrap completed.'));
+	});
+
+	it('seeds only the project default language on a fresh (zero-row) languages collection', async () => {
+		// Fresh DB, default fr-FR: only fr-FR is seeded — never a
+		// forced en-US. With en-US missing, the suggested-copy rows are
+		// skipped (language missing) rather than created against a
+		// nonexistent FK.
 		const s = makeServices({
 			settings: { readSingleton: async () => ({ default_language: 'fr-FR' }) },
 		});
 		const logger = makeLogger();
 		await runBootstrap(dir, s as any, getSchema, {}, logger);
 		const codes = s._stores.languages!.map((r: any) => r.code).sort();
-		expect(codes).toEqual(['en-US', 'fr-FR']);
-		// Each template gets two translation rows: empty fr-FR + suggested en-US.
-		expect(s._stores.email_template_translations?.length).toBe(10);
+		expect(codes).toEqual(['fr-FR']);
+		// One translation row per template: empty fr-FR placeholder only.
+		expect(s._stores.email_template_translations?.length).toBe(5);
 		const frBaseRow = s._stores.email_template_translations!.find(
 			(r: any) => r.languages_code === 'fr-FR',
 		);
 		expect(frBaseRow.subject).toBe('');
 		expect(frBaseRow.i18n_variables).toEqual({});
-		const enBaseRow = s._stores.email_template_translations!.find(
-			(r: any) =>
-				r.languages_code === 'en-US' &&
-				r.email_templates_id === frBaseRow.email_templates_id,
+		expect(logger.warn).toHaveBeenCalledWith(
+			expect.stringContaining('Skipping translation seed for base/en-US'),
 		);
-		expect(enBaseRow.from_name).toBe('Your Organization');
-		expect(enBaseRow.i18n_variables.org_name).toBe('Your Organization');
+		expect(logger.info).toHaveBeenCalledWith(expect.stringContaining('Bootstrap completed.'));
+	});
+
+	it('seeds only en-US on a fresh collection when the default is en-US', async () => {
+		const s = makeServices();
+		const logger = makeLogger();
+		await runBootstrap(dir, s as any, getSchema, {}, logger);
+		expect(s._stores.languages!.map((r: any) => r.code)).toEqual(['en-US']);
+		expect(s._stores.email_template_translations?.length).toBe(5);
 	});
 
 	it('skips re-seeding variables that already exist', async () => {

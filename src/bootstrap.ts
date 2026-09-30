@@ -342,11 +342,12 @@ async function migrateColumnRename(
 
 /**
  *   - If the collection already has rows, skip entirely (admin or a
- *     prior boot has populated it).
- *   - Otherwise insert one row for the project's default language
- *     (`directus_settings.default_language`, BCP-47).
- *   - If the default is not `en-US`, also insert `en-US` so the
- *     suggested English translation copy has a home.
+ *     prior boot has populated it). The collection is admin-owned
+ *     from that point on — bootstrap never adds languages to a
+ *     populated collection.
+ *   - Otherwise (zero rows) insert one row for the project's default
+ *     language (`directus_settings.default_language`, BCP-47) and
+ *     nothing else — no forced `en-US`.
  */
 async function seedLanguages(
 	services: ExtensionsServices,
@@ -371,13 +372,6 @@ async function seedLanguages(
 		name: localizeLangCode(defaultLang),
 	});
 	logger.info(`[i18n-email] Seeded language ${defaultLang} (project default).`);
-	if (defaultLang !== 'en-US') {
-		await items.createOne({
-			code: 'en-US',
-			name: localizeLangCode('en-US'),
-		});
-		logger.info('[i18n-email] Seeded language en-US (English suggested copy fallback).');
-	}
 	return defaultLang;
 }
 
@@ -490,7 +484,11 @@ async function seedTemplates(
  *   - If the default is not `en-US`, also insert the English
  *     suggested-copy row from `SEED_TRANSLATIONS` so there's a
  *     working fallback out of the box.
- * Skip any (template, language) pair that already has a row.
+ * Skip any (template, language) pair that already has a row. Skip a
+ * row entirely when its language is missing from the languages
+ * collection (admin-owned when populated) — inserting it would
+ * violate the `languages_code` foreign key, so the row is logged with
+ * a remediation hint and the rest of bootstrap proceeds.
  */
 async function seedTranslations(
 	templateRows: EmailTemplateRow[],
@@ -505,6 +503,27 @@ async function seedTranslations(
 	});
 	const byKey = new Map(templateRows.map((r) => [r.template_key, r]));
 	const englishSeedByKey = new Map(SEED_TRANSLATIONS.map((s) => [s.template_key, s]));
+	const languageItems = new services.ItemsService(LANGUAGES_COLLECTION, {
+		schema,
+		accountability: null,
+	});
+	const neededCodes = defaultLang === 'en-US' ? [defaultLang] : [defaultLang, 'en-US'];
+	const languagesExist = new Map<string, boolean>();
+	for (const code of neededCodes) {
+		try {
+			const rows = await languageItems.readByQuery({
+				filter: { code: { _eq: code } },
+				fields: ['code'],
+				limit: 1,
+			});
+			languagesExist.set(code, rows.length > 0);
+		} catch (err) {
+			logger.warn(
+				`[i18n-email] Could not verify language ${code}: ${(err as Error).message} — skipping its translation seeds.`,
+			);
+			languagesExist.set(code, false);
+		}
+	}
 
 	async function upsert(
 		templateKey: string,
@@ -516,11 +535,18 @@ async function seedTranslations(
 			i18n_variables: Record<string, string>;
 		},
 		label: string,
+		languageExists: boolean,
 	): Promise<void> {
 		const parent = byKey.get(templateKey);
 		if (!parent || !parent.id) {
 			logger.warn(
 				`[i18n-email] Skipping translation seed for ${templateKey}/${languagesCode}: parent row missing.`,
+			);
+			return;
+		}
+		if (!languageExists) {
+			logger.warn(
+				`[i18n-email] Skipping translation seed for ${templateKey}/${languagesCode}: language ${languagesCode} is missing from the languages collection — add it in Data Studio or set it as the project default, then restart Directus.`,
 			);
 			return;
 		}
@@ -532,11 +558,18 @@ async function seedTranslations(
 			limit: 1,
 		});
 		if (existing.length > 0) return;
-		await items.createOne({
-			email_templates_id: parent.id,
-			languages_code: languagesCode,
-			...payload,
-		});
+		try {
+			await items.createOne({
+				email_templates_id: parent.id,
+				languages_code: languagesCode,
+				...payload,
+			});
+		} catch (err) {
+			logger.warn(
+				`[i18n-email] Skipping translation seed for ${templateKey}/${languagesCode}: ${(err as Error).message}`,
+			);
+			return;
+		}
 		logger.info(`[i18n-email] Seeded translation ${templateKey}/${languagesCode} (${label}).`);
 	}
 
@@ -547,6 +580,7 @@ async function seedTranslations(
 			defaultLang,
 			{ subject: '', from_name: null, from_address: null, i18n_variables: {} },
 			'empty default-lang placeholder',
+			languagesExist.get(defaultLang) ?? false,
 		);
 		// English suggested copy when the default is not English.
 		if (defaultLang !== 'en-US') {
@@ -562,6 +596,7 @@ async function seedTranslations(
 						i18n_variables: seed.i18n_variables,
 					},
 					'English suggested copy',
+					languagesExist.get('en-US') ?? false,
 				);
 			}
 		}
