@@ -2,8 +2,8 @@
 
 Database-backed, multilingual transactional email for Directus. You will be able to translate system emails (password reset, user invitation, user registration) into every language you need to support — and ship your own transactional templates the same way.
 
-- **DB is the source of truth.** Each email lives as a single `email_templates` row whose Liquid `body` is the template; translatable copy (subject, from-name, i18n strings) lives in `email_template_translations`, one row per language, edited through Directus's native translations interface.
-- **Liquid everywhere translatable.** Subject, from-name, and every value inside the i18n variables map are Liquid-rendered against the same data context as the body — so translators can write `{{ user.first_name }}` (or any caller-supplied variable) directly inside a translated string or subject line, where word order varies by language.
+- **DB is the source of truth.** Each email lives as a single `email_templates` row whose Liquid `body` is the template; translatable copy (subject, from-name, from-address, i18n strings) lives in `email_template_translations`, one row per language, edited through Directus's native translations interface.
+- **Liquid everywhere translatable.** Subject, from-name, from-address, and every value inside the i18n variables map are Liquid-rendered against the same data context as the body — so translators can write `{{ user.first_name }}` (or any caller-supplied variable) directly inside a translated string or subject line, where word order varies by language.
 - **Body is mirrored to disk.** Whenever a `body` is created or updated, the extension writes `EMAIL_TEMPLATES_PATH/<template_key>.liquid` so Directus's `MailService` can render it. Translations stay in the DB — no `.json` locale files.
 - **Auto-reconciled i18n variables.** Every `email_template_translations.i18n_variables` row keeps a `{ in_template, unused }` split. Keys referenced by the body (`{{ i18n.foo }}`) are extracted automatically on create/update and on user-driven refreshes; keys you remove from the body are demoted to `unused` (kept for re-use), never silently deleted.
 - **Custom editor interfaces.** The bundle ships three Vue interfaces wired to the schema by default: a body editor that emits blur events, a translations wrapper with a refresh button + per-user auto-refresh toggle, and a two-section variables editor (In template / Unused) with a JSON fallback view.
@@ -23,6 +23,7 @@ Database-backed, multilingual transactional email for Directus. You will be able
 - [Install](#install)
 - [First Boot](#first-boot)
 - [How It Works](#how-it-works)
+- [Sender (from) Handling](#sender-from-handling)
 - [Environment Variables](#environment-variables)
 - [Directory Layout](#directory-layout)
 - [Collections](#collections)
@@ -84,10 +85,10 @@ The extension registers an `email.send` filter. For every outgoing email:
 1. Resolves the recipient's language (full BCP-47): `directus_users.language` of the recipient → `directus_settings.default_language` → `I18N_EMAIL_FALLBACK_LANG` → `en-US`.
 2. Fetches the active `email_templates` row for `template_key = template.name` plus its `email_template_translations` row for the effective language. Falls back to the default-language translation when the effective-language row is missing or is the empty-placeholder shape (blank subject AND empty/null `i18n_variables.in_template`).
 3. Validates required variables from `email_template_variables`. Missing variables abort the send and trigger an admin notification.
-4. Pre-renders the translation's `subject`, `from_name`, and every value in its `i18n_variables.in_template` map through Liquid using the same data context the body will see. Only the `in_template` half is sent — `unused` entries are kept in the DB for re-use but never reach the recipient.
+4. Pre-renders the translation's `subject`, `from_name`, `from_address`, and every value in its `i18n_variables.in_template` map through Liquid using the same data context the body will see. Only the `in_template` half is sent — `unused` entries are kept in the DB for re-use but never reach the recipient.
 5. Also resolves the `base` template's translation for the same language and exposes its rendered `in_template` strings as `i18n.base.*` (shared layout copy).
 6. For protected system templates, hydrates the recipient as `user` from `directus_users` (when not already provided in `template.data`).
-7. Injects the rendered values into the email: `subject`, `from_name`, and `template.data.i18n.*`.
+7. Injects the rendered values into the email: `subject`, the sender (`from`) when the caller didn't supply one, and `template.data.i18n.*`.
 
 Templates whose `template.name` doesn't match any active DB row pass through untouched — Directus's native renderer handles them.
 
@@ -102,6 +103,55 @@ Whenever an `email_templates.body` is created or updated, the extension parses t
 This means the variables editor is always in sync with what the template actually uses, without you having to bookkeep keys by hand. The custom interfaces (see [Editor Interfaces](#editor-interfaces)) trigger the same reconcile on demand from the form.
 
 Whenever an `email_templates` row is created or its `body` / `template_key` is updated, the extension re-writes `<template_key>.liquid` atomically and appends to `email_template_sync_audit`.
+
+<br />
+
+---
+
+<br />
+
+## Sender (from) Handling
+
+Two translation fields control the sender per language:
+
+| Field          | Purpose                                                                                                       |
+| -------------- | ------------------------------------------------------------------------------------------------------------- |
+| `from_name`    | Sender display name for this language (Liquid-rendered). Falls back to `I18N_EMAIL_FALLBACK_FROM_NAME` → `directus_settings.project_name`. |
+| `from_address` | Sender **address** for this language (bare email, Liquid-rendered) — e.g. `no-reply@sympothetford.com` in English, `sans-reponse@sympothetford.com` in French. Falls back to `EMAIL_FROM`. |
+
+Both fields follow the same fallback chain, applied independently: the effective-language translation → the default-language translation → the env/fallback value.
+
+When the send payload carries no `from`, the extension resolves the sender as:
+
+```
+{ name: translation.from_name || fallbackFromName, address: translation.from_address || EMAIL_FROM }
+```
+
+A translation `from_address` that is not a valid bare email address (e.g. it contains spaces, `<`, or `>`) is ignored with a logged warning, and `EMAIL_FROM` is used instead. If no address can be resolved, `from` is left unset and Directus falls back to `EMAIL_FROM` on its own.
+
+### Precedence
+
+An explicit `from` in the payload **always wins**:
+
+1. **`from` is a complete `{ address, name }` object** → passed through to MailService untouched.
+2. **`from` is a bare address string** → the string is the caller's address and wins; i18n only enriches the display name when one is resolvable, producing `{ name: translation.from_name || fallbackFromName, address: <string> }`. With no name source, the string passes through as-is.
+3. **`from` is absent** → `{ name, address }` resolved from the translation fields as above.
+
+Formatted `"Name <address>"` strings are not supported anywhere in this pipeline — pass either a bare address string or an `{ address, name }` object. The extension never emits a `from` object whose address contains `<` or `>`, or whose name/address is empty.
+
+### Verifying sender handling
+
+1. **Explicit sender passthrough** — send through the standard `email-send` endpoint (or `MailService`) with an explicit sender:
+   ```json
+   POST /email-send
+   {
+     "to": "you@example.com",
+     "from": { "address": "no-reply@sympothetford.com", "name": "Sympothetford" },
+     "template": { "name": "password-reset", "data": { "url": "https://example.com/reset" } }
+   }
+   ```
+   The received email's `From` header must equal the payload sender, wrapped in the default `base` layout as usual.
+2. **Localized sender** — clear `from` from the payload, set the recipient's `directus_users.language` to `fr`, and put `sans-reponse@sympothetford.com` in the French translation row's `from_address` (plus a `from_name` such as `Sympothetford`). The received email's `From` header must be `Sympothetford <sans-reponse@sympothetford.com>`.
 
 <br />
 
@@ -142,7 +192,7 @@ EMAIL_TEMPLATES_PATH/
 └── admin-error.liquid          — internal: sent to admins on dispatch failure
 ```
 
-The `.liquid` files in this directory are managed by this extension — they are written from `email_templates.body` whenever a row is created or its body is updated. Translations (subject, from-name, i18n strings) live exclusively in the DB; there are no on-disk locale files.
+The `.liquid` files in this directory are managed by this extension — they are written from `email_templates.body` whenever a row is created or its body is updated. Translations (subject, from-name, from-address, i18n strings) live exclusively in the DB; there are no on-disk locale files.
 
 You can copy the files under [examples/templates/](examples/templates) into `EMAIL_TEMPLATES_PATH` _before_ the first boot to use them as the seeded body for matching `template_key`s — bootstrap will pick them up in preference to the shipped defaults.
 
@@ -193,6 +243,7 @@ One row per `(email_templates_id, languages_code)` pair, edited through the pare
 | `languages_code`     | string  | FK → `languages.code` (cascade delete)                                                                                                                                                                                           |
 | `subject`            | string? | Email subject. Empty for the `base` layout. Liquid-rendered before send.                                                                                                                                                         |
 | `from_name`          | string? | Sender display-name override for this language. Liquid-rendered before send.                                                                                                                                                     |
+| `from_address`       | string? | Sender address override for this language (bare email). Liquid-rendered before send. Used only when the caller provides no `from`.                                                                                                |
 | `i18n_variables`     | json    | `{ in_template: { [key]: string }, unused: { [key]: string } }`. `in_template` values are Liquid-rendered and exposed to the body as `{{ i18n.* }}`; `unused` values are kept in the DB for re-use but never sent to recipients. |
 
 ### `email_template_variables`
@@ -251,15 +302,16 @@ Templates are yours to design. Inside a template body you have access to:
 
 ### Liquid in translation fields
 
-Translation `subject`, `from_name`, and every value inside `i18n_variables.in_template` are themselves Liquid-rendered against the same data context the body sees (minus `i18n` itself — translations can't reference themselves). This applies equally to all three fields, so any of these work:
+Translation `subject`, `from_name`, `from_address`, and every value inside `i18n_variables.in_template` are themselves Liquid-rendered against the same data context the body sees (minus `i18n` itself — translations can't reference themselves). This applies equally to all of these fields, so any of these work:
 
 | Field in `email_template_translations` | Example value                   | Renders to      |
 | -------------------------------------- | ------------------------------- | --------------- |
 | `subject`                              | `Bonjour {{ user.first_name }}` | `Bonjour Marie` |
 | `from_name`                            | `{{ projectName }} Support`     | `Acme Support`  |
+| `from_address`                         | `sans-reponse@{{ domain }}`     | `sans-reponse@acme.com` |
 | `i18n_variables.in_template.greeting`  | `Hello, {{ user.first_name }}!` | `Hello, John!`  |
 
-The rendered `subject` overrides the email's subject; the rendered `from_name` overrides the sender display-name; rendered `in_template` strings are exposed to the body as `{{ i18n.* }}`. Entries under `i18n_variables.unused` are not rendered and not sent — they're a holding area for keys removed from the body. If a value contains no Liquid tokens it's used as-is. If Liquid parsing fails for a value, the raw string is used and a warning is logged — a bad translation never aborts the send.
+The rendered `subject` overrides the email's subject; the rendered `from_name` / `from_address` supply the sender display name and address when the payload has no `from` (see [Sender (from) Handling](#sender-from-handling)); rendered `in_template` strings are exposed to the body as `{{ i18n.* }}`. Entries under `i18n_variables.unused` are not rendered and not sent — they're a holding area for keys removed from the body. If a value contains no Liquid tokens it's used as-is. If Liquid parsing fails for a value, the raw string is used and a warning is logged — a bad translation never aborts the send.
 
 ### Minimal example
 
@@ -344,10 +396,12 @@ await mail.send({
 });
 ```
 
+You may pass an explicit `from` — a complete `{ address, name }` object (used untouched) or a bare address string (its address wins; i18n may add a display name). Omit `from` to let the translation row's `from_name` / `from_address` localize the sender — see [Sender (from) Handling](#sender-from-handling).
+
 To wire up a new template:
 
 1. Create a single `email_templates` row with `template_key = 'order-shipped'`, set its `body` to your Liquid template, and `is_active = true`.
-2. Open the translations interface on that row and add one translation per language (subject, from-name, strings).
+2. Open the translations interface on that row and add one translation per language (subject, from-name, from-address, strings).
 3. Declare each required variable in `email_template_variables` for `template_key = 'order-shipped'`.
 
 The body file at `EMAIL_TEMPLATES_PATH/order-shipped.liquid` is created automatically. If no DB row exists for the `template.name` you pass, Directus's native Liquid renderer handles the email unchanged.

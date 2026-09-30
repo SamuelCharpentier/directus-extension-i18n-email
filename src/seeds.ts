@@ -121,6 +121,7 @@ export const SEED_TRANSLATIONS: SeedTranslation[] = [
 		languages_code: 'en-US',
 		subject: '',
 		from_name: 'Your Organization',
+		from_address: null,
 		i18n_variables: {
 			footer_note: 'If this message does not concern you, you can ignore it or contact us.',
 			org_name: 'Your Organization',
@@ -136,6 +137,7 @@ export const SEED_TRANSLATIONS: SeedTranslation[] = [
 		languages_code: 'en-US',
 		subject: 'Password Reset Request',
 		from_name: null,
+		from_address: null,
 		i18n_variables: {
 			heading: 'Reset your password',
 			body: 'We received a request to reset the password for your account. If you did not make this request, you can safely ignore this email.',
@@ -150,6 +152,7 @@ export const SEED_TRANSLATIONS: SeedTranslation[] = [
 		languages_code: 'en-US',
 		subject: 'You have been invited',
 		from_name: null,
+		from_address: null,
 		i18n_variables: {
 			heading: "You've been invited!",
 			body: 'You have been invited to join. Click the button below to accept this invitation.',
@@ -163,6 +166,7 @@ export const SEED_TRANSLATIONS: SeedTranslation[] = [
 		languages_code: 'en-US',
 		subject: 'Verify your email address',
 		from_name: null,
+		from_address: null,
 		i18n_variables: {
 			heading: 'Verify your email address',
 			body: 'Thanks for registering. To complete your registration, verify your email address by clicking the link below.',
@@ -176,6 +180,7 @@ export const SEED_TRANSLATIONS: SeedTranslation[] = [
 		languages_code: 'en-US',
 		subject: '[Directus] Email dispatch failure: {{ reason }}',
 		from_name: null,
+		from_address: null,
 		i18n_variables: {
 			heading: 'Email dispatch failure',
 			body: 'The i18n-email extension encountered an error while processing an email. Please review the context below.',

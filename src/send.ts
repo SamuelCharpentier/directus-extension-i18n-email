@@ -29,7 +29,9 @@ export type SendFilterDeps = {
  * 2. Fetch template + translation for that language (with fallback).
  * 3. Validate required variables.
  * 4. For protected system emails, hydrate `user` from directus_users.
- * 5. Inject i18n + base strings + subject + from-name into the email.
+ * 5. Inject i18n + base strings + subject + sender (name/address per
+ *    translation fallback, only when the caller passed no from) into
+ *    the email.
  *
  * Unknown template names pass through unchanged.
  */
@@ -119,7 +121,8 @@ export async function runSendFilter(
 		const fallbackFromName = envFromName ?? projectName;
 		const fromEnv = typeof env['EMAIL_FROM'] === 'string' ? (env['EMAIL_FROM'] as string) : '';
 
-		// Pre-render Liquid in translated strings, subject, and from_name
+		// Pre-render Liquid in translated strings, subject, from_name,
+		// and from_address
 		// using the same context the body template will eventually see
 		// (minus `i18n` itself — translations can't reference themselves).
 		// This lets translators put `{{ user.first_name }}` directly inside
@@ -156,12 +159,21 @@ export async function runSendFilter(
 					`${templateName}.from_name`,
 				)
 			: (translation?.from_name ?? null);
+		const renderedFromAddress = translation?.from_address
+			? await renderLiquidString(
+					translation.from_address,
+					renderCtx,
+					logger,
+					`${templateName}.from_address`,
+				)
+			: (translation?.from_address ?? null);
 
 		const renderedTranslation: EmailTemplateTranslationRow | null = translation
 			? {
 					...translation,
 					subject: renderedSubject,
 					from_name: renderedFromName,
+					from_address: renderedFromAddress,
 					i18n_variables: renderedStrings,
 				}
 			: null;
@@ -172,6 +184,7 @@ export async function runSendFilter(
 			fallbackFromName,
 			fromEnv,
 			recipientUser,
+			logger,
 		});
 	} catch (err) {
 		if (err instanceof Error && err.message.startsWith('Missing required variable')) {

@@ -76,6 +76,19 @@ describe('schema', () => {
 		expect((alias?.meta as any)?.interface).toBe('translations-i18n-aware');
 		expect((alias?.meta as any)?.special).toContain('translations');
 	});
+	it('places from_address to the right of from_name in the translations form', () => {
+		const fields = EMAIL_TEMPLATE_TRANSLATIONS_COLLECTION.fields;
+		const fromName = fields.find((f) => f.field === 'from_name');
+		const fromAddress = fields.find((f) => f.field === 'from_address');
+		const i18n = fields.find((f) => f.field === 'i18n_variables');
+		expect((fromName?.meta as any)?.width).toBe('half');
+		expect((fromAddress?.meta as any)?.width).toBe('half');
+		expect((fromName?.meta as any)?.sort).toBe(5);
+		expect((fromAddress?.meta as any)?.sort).toBe(6);
+		expect((i18n?.meta as any)?.sort).toBe(7);
+		expect((fromAddress?.meta as any)?.sort).toBeGreaterThan((fromName?.meta as any)?.sort);
+		expect((i18n?.meta as any)?.sort).toBeGreaterThan((fromAddress?.meta as any)?.sort);
+	});
 	it('defines relations for translations', () => {
 		const names = ALL_RELATIONS.map((r) => `${r.collection}.${r.field}`);
 		expect(names).toContain('email_template_translations.email_templates_id');

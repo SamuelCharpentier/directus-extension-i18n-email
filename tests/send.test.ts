@@ -373,4 +373,116 @@ describe('runSendFilter', () => {
 		expect(input.template.data.i18n.heading).toBe('{% bogus %}');
 		expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('Liquid render failed'));
 	});
+
+	it('leaves an explicit from object untouched', async () => {
+		const s = buildServices();
+		const input = mkInput({ from: { address: 'explicit@sender.co', name: 'Explicit Sender' } });
+		await runSendFilter(input as any, deps(s));
+		expect((input as any).from).toEqual({ address: 'explicit@sender.co', name: 'Explicit Sender' });
+	});
+
+	it('keeps an explicit from string address and enriches only the display name', async () => {
+		const s = buildServices();
+		const input = mkInput({ from: 'caller@sender.co' });
+		await runSendFilter(input as any, deps(s));
+		expect((input as any).from).toEqual({ name: 'Acme', address: 'caller@sender.co' });
+	});
+
+	it('applies translation from_name/from_address when from is absent (French locale)', async () => {
+		const s = buildServices({
+			withUser: true,
+			vars: [],
+			translations: [
+				{
+					id: 'pfr',
+					email_templates_id: 'tp',
+					languages_code: 'fr',
+					subject: 'Réinit',
+					from_name: 'Mon Org',
+					from_address: 'sans-reponse@sympothetford.com',
+					i18n_variables: { heading: 'Salut' },
+				},
+				{
+					id: 'bfr',
+					email_templates_id: 'tb',
+					languages_code: 'fr',
+					subject: '',
+					from_name: null,
+					i18n_variables: { footer_note: 'au revoir' },
+				},
+			],
+		});
+		const input = mkInput();
+		await runSendFilter(input as any, deps(s));
+		expect((input as any).from).toEqual({
+			name: 'Mon Org',
+			address: 'sans-reponse@sympothetford.com',
+		});
+	});
+
+	it('pre-renders Liquid in translation from_address', async () => {
+		const s = buildServices({
+			withUser: true,
+			vars: [],
+			translations: [
+				{
+					id: 'pfr',
+					email_templates_id: 'tp',
+					languages_code: 'fr',
+					subject: 'Réinit',
+					from_name: 'Mon Org',
+					from_address: 'sans-reponse@{{ domain }}',
+					i18n_variables: { heading: 'Salut' },
+				},
+				{
+					id: 'bfr',
+					email_templates_id: 'tb',
+					languages_code: 'fr',
+					subject: '',
+					from_name: null,
+					i18n_variables: { footer_note: 'au revoir' },
+				},
+			],
+		});
+		const input = mkInput({
+			template: { name: 'password-reset', data: { url: 'https://x', domain: 'sympothetford.com' } },
+		});
+		await runSendFilter(input as any, deps(s));
+		expect((input as any).from).toEqual({
+			name: 'Mon Org',
+			address: 'sans-reponse@sympothetford.com',
+		});
+	});
+
+	it('warns and falls back to EMAIL_FROM when translation from_address is invalid', async () => {
+		const s = buildServices({
+			withUser: true,
+			vars: [],
+			translations: [
+				{
+					id: 'pfr',
+					email_templates_id: 'tp',
+					languages_code: 'fr',
+					subject: 'Réinit',
+					from_name: 'Mon Org',
+					from_address: 'pas une adresse',
+					i18n_variables: { heading: 'Salut' },
+				},
+				{
+					id: 'bfr',
+					email_templates_id: 'tb',
+					languages_code: 'fr',
+					subject: '',
+					from_name: null,
+					i18n_variables: { footer_note: 'au revoir' },
+				},
+			],
+		});
+		const input = mkInput();
+		await runSendFilter(input as any, deps(s));
+		expect((input as any).from).toEqual({ name: 'Mon Org', address: 'no-reply@x.co' });
+		expect(logger.warn).toHaveBeenCalledWith(
+			expect.stringContaining('is not a valid email address'),
+		);
+	});
 });

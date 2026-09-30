@@ -218,7 +218,7 @@ export const EMAIL_TEMPLATE_TRANSLATIONS_COLLECTION: CollectionPayload = {
 	collection: TRANSLATIONS_COLLECTION,
 	meta: {
 		icon: 'translate',
-		note: 'Per-language subject, from_name, and i18n strings for an email template.',
+		note: 'Per-language subject, sender name/address, and i18n strings for an email template.',
 		display_template: '{{ email_templates_id.template_key }} · {{ languages_code }}',
 		sort_field: 'languages_code',
 		hidden: true,
@@ -255,7 +255,7 @@ export const EMAIL_TEMPLATE_TRANSLATIONS_COLLECTION: CollectionPayload = {
 		{
 			field: 'subject',
 			type: 'string',
-			meta: { interface: 'input', width: 'full' },
+			meta: { interface: 'input', width: 'full', sort: 4 },
 			schema: { is_nullable: true },
 		},
 		{
@@ -264,7 +264,19 @@ export const EMAIL_TEMPLATE_TRANSLATIONS_COLLECTION: CollectionPayload = {
 			meta: {
 				interface: 'input',
 				width: 'half',
+				sort: 5,
 				note: 'Optional sender display name override for this language.',
+			},
+			schema: { is_nullable: true },
+		},
+		{
+			field: 'from_address',
+			type: 'string',
+			meta: {
+				interface: 'input',
+				width: 'half',
+				sort: 6,
+				note: 'Optional sender address override for this language (bare email address, e.g. sans-reponse@example.com). Used only when the caller provides no from.',
 			},
 			schema: { is_nullable: true },
 		},
@@ -279,6 +291,7 @@ export const EMAIL_TEMPLATE_TRANSLATIONS_COLLECTION: CollectionPayload = {
 					{ language: 'fr-FR', translation: 'i18n_variables' },
 				],
 				width: 'full',
+				sort: 7,
 			},
 			schema: { is_nullable: false, default_value: '{"in_template":{},"unused":{}}' },
 		},

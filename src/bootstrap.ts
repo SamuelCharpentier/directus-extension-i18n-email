@@ -484,8 +484,9 @@ async function seedTemplates(
 /**
  * Seed translation rows. For each protected template:
  *   - Insert one empty row for the project's default language
- *     (`subject: ''`, `from_name: null`, `i18n_variables: {}`) so admins fill
- *     in their primary-language copy themselves.
+ *     (`subject: ''`, `from_name: null`, `from_address: null`,
+ *     `i18n_variables: {}`) so admins fill in their primary-language
+ *     copy themselves.
  *   - If the default is not `en-US`, also insert the English
  *     suggested-copy row from `SEED_TRANSLATIONS` so there's a
  *     working fallback out of the box.
@@ -511,6 +512,7 @@ async function seedTranslations(
 		payload: {
 			subject: string;
 			from_name: string | null;
+			from_address: string | null;
 			i18n_variables: Record<string, string>;
 		},
 		label: string,
@@ -543,7 +545,7 @@ async function seedTranslations(
 		await upsert(
 			tpl.template_key,
 			defaultLang,
-			{ subject: '', from_name: null, i18n_variables: {} },
+			{ subject: '', from_name: null, from_address: null, i18n_variables: {} },
 			'empty default-lang placeholder',
 		);
 		// English suggested copy when the default is not English.
@@ -556,6 +558,7 @@ async function seedTranslations(
 					{
 						subject: seed.subject,
 						from_name: seed.from_name,
+						from_address: seed.from_address,
 						i18n_variables: seed.i18n_variables,
 					},
 					'English suggested copy',
@@ -644,9 +647,14 @@ export async function runBootstrap(
 			bootstrapRan = true;
 			logger.info('[i18n-email] Bootstrap completed.');
 		} catch (err) {
+			const e = err as Error & { code?: string; detail?: string; sql?: string };
 			logger.error(
-				`[i18n-email] Bootstrap failed (non-strict, extension will continue): ${(err as Error).message}`,
+				`[i18n-email] Bootstrap failed (non-strict, extension will continue): ${e.message}` +
+					(e.code ? ` [code=${e.code}]` : '') +
+					(e.detail ? ` [detail=${e.detail}]` : '') +
+					(e.sql ? ` [sql=${e.sql}]` : ''),
 			);
+			if (e.stack) logger.error(`[i18n-email] Bootstrap failure stack:\n${e.stack}`);
 		} finally {
 			bootstrapInFlight = null;
 		}

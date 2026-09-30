@@ -44,6 +44,11 @@ export type EmailTemplateTranslationRow = {
 	subject: string;
 	from_name: string | null;
 	/**
+	 * Optional per-language sender address override (bare email address,
+	 * e.g. `sans-reponse@example.com`). Liquid-rendered before send.
+	 */
+	from_address: string | null;
+	/**
 	 * Stored shape is `I18nVariables`, but the row may arrive from the DB
 	 * driver as a JSON string (driver-dependent) or in the legacy
 	 * bare-key shape from older boots. Server-side reconcile coerces
@@ -79,6 +84,7 @@ export type SeedTranslation = {
 	languages_code: string;
 	subject: string;
 	from_name: string | null;
+	from_address: string | null;
 	i18n_variables: TranslationStrings;
 };
 
