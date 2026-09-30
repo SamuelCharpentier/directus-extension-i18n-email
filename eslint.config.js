@@ -16,7 +16,9 @@ const tsUnusedVarsRule = [
 
 export default tseslint.config(
 	{
-		ignores: ['dist/**', 'node_modules/**', 'coverage/**', 'examples/**'],
+		// `.kilo/**` holds agent-harness state and nested git worktrees
+		// (full repo copies); linting those breaks tsconfig-root resolution.
+		ignores: ['dist/**', 'node_modules/**', 'coverage/**', 'examples/**', '.kilo/**'],
 	},
 	js.configs.recommended,
 	...tseslint.configs.recommended,
