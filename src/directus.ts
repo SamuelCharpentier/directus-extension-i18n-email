@@ -62,17 +62,37 @@ export function capitalizeFirst(value: string, locale?: string): string {
 	return upper + value.slice(1);
 }
 
+/**
+ * Resolve the project default language. Precedence:
+ *   1. `DEFAULT_LANGUAGE` env (canonicalized BCP-47) — the operator's
+ *      explicit pin, matching `ensureDefaultLanguage`.
+ *   2. `directus_settings.default_language`.
+ *   3. `I18N_EMAIL_FALLBACK_LANG`.
+ *   4. `en-US`.
+ */
 export async function fetchDefaultLang(
 	services: ExtensionsServices,
 	schema: SchemaOverview,
 	env: Record<string, unknown>,
 ): Promise<string> {
+	const envDefault = canonicalizeLang(env['DEFAULT_LANGUAGE']);
+	if (envDefault) return envDefault;
 	const settings = new services.SettingsService({ schema, accountability: null });
 	const result = await settings.readSingleton({ fields: ['default_language'] });
 	const settingsLang = normaliseLang(result['default_language']);
 	if (settingsLang) return settingsLang;
 	const envLang = normaliseLang(env['I18N_EMAIL_FALLBACK_LANG']);
 	return envLang ?? DEFAULT_FALLBACK_LANG;
+}
+
+/** Canonicalize a BCP-47 tag (e.g. `fr-ca` → `fr-CA`); null when invalid. */
+function canonicalizeLang(value: unknown): string | null {
+	if (typeof value !== 'string' || value.trim().length === 0) return null;
+	try {
+		return Intl.getCanonicalLocales(value.trim())[0] ?? null;
+	} catch {
+		return null;
+	}
 }
 
 export async function fetchUserLang(

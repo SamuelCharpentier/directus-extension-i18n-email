@@ -1,6 +1,8 @@
 import type { ExtensionsServices, SchemaOverview } from '@directus/types';
-import type { EmailTemplateRow, Logger } from './types';
+import type { EmailTemplateRow, I18nVariables, Logger } from './types';
 import {
+	BOOTSTRAP_MODES,
+	type BootstrapMode,
 	LANGUAGES_COLLECTION,
 	PROTECTED_TEMPLATE_KEYS,
 	TEMPLATES_COLLECTION,
@@ -10,11 +12,38 @@ import {
 import { ALL_COLLECTIONS, ALL_RELATIONS } from './schema';
 import { SEED_TEMPLATES, SEED_TRANSLATIONS, SEED_VARIABLES } from './seeds';
 import { computeChecksum } from './integrity';
-import { fetchDefaultLang, localizeLangCode, capitalizeFirst } from './directus';
+import {
+	fetchDefaultLang,
+	fetchAllTemplateRows,
+	localizeLangCode,
+	capitalizeFirst,
+} from './directus';
+import { ensureDefaultLanguage } from './default-language';
+import { templateId, translationId, variableId } from './ids';
+import { buildInitialStrings, coerceI18nVariables } from './reconcile';
 import { readTemplateFromDisk, syncTemplateBody } from './sync';
+
+/** Mutations here must not re-fire our own hooks (they'd race the bootstrap). */
+const NO_EVENTS = { emitEvents: false } as const;
 
 let bootstrapRan = false;
 let bootstrapInFlight: Promise<void> | null = null;
+
+export function resolveBootstrapMode(
+	env: Record<string, unknown>,
+	logger: Pick<Logger, 'warn'>,
+): BootstrapMode {
+	const raw =
+		typeof env['I18N_EMAIL_BOOTSTRAP'] === 'string'
+			? env['I18N_EMAIL_BOOTSTRAP'].trim().toLowerCase()
+			: '';
+	if (!raw) return 'full';
+	if ((BOOTSTRAP_MODES as readonly string[]).includes(raw)) return raw as BootstrapMode;
+	logger.warn(
+		`[i18n-email] Unknown I18N_EMAIL_BOOTSTRAP="${raw}" — falling back to "full". Expected one of: ${BOOTSTRAP_MODES.join(', ')}.`,
+	);
+	return 'full';
+}
 
 function isProtectedKey(key: string): boolean {
 	return (PROTECTED_TEMPLATE_KEYS as readonly string[]).includes(key);
@@ -47,6 +76,47 @@ async function createCollectionIfMissing(
 	const collectionsService = new services.CollectionsService({ schema, accountability: null });
 	await collectionsService.createOne(payload as any);
 	logger.info(`[i18n-email] Created collection ${payload.collection}.`);
+}
+
+/**
+ * One-shot migration for installs created before `is_active` was decoupled
+ * from Directus's archive mechanism.
+ *
+ * Older schemas registered `archive_field: 'is_active'` on
+ * `email_templates`. With that set, Directus hides rows where
+ * `is_active = false` from the content list and turns delete into archive,
+ * so a disabled template appears to vanish. This clears only the three
+ * archive keys (leaving all other collection meta untouched) and only
+ * when `archive_field` is currently `is_active`.
+ */
+async function clearLegacyArchiveField(
+	services: ExtensionsServices,
+	schema: SchemaOverview,
+	logger: Pick<Logger, 'info' | 'warn'>,
+): Promise<void> {
+	const CollectionsService = (services as any).CollectionsService;
+	if (typeof CollectionsService !== 'function') return;
+	const svc = new CollectionsService({ schema, accountability: null });
+	let current: any;
+	try {
+		current = await svc.readOne(TEMPLATES_COLLECTION);
+	} catch {
+		return;
+	}
+	const meta = current?.meta ?? {};
+	if (meta.archive_field !== 'is_active') return;
+	try {
+		await svc.updateOne(TEMPLATES_COLLECTION, {
+			meta: { ...meta, archive_field: null, archive_value: null, unarchive_value: null },
+		});
+		logger.info(
+			'[i18n-email] Cleared legacy archive_field on email_templates — inactive templates stay listed.',
+		);
+	} catch (err) {
+		logger.warn(
+			`[i18n-email] Could not clear archive_field on email_templates: ${(err as Error).message}`,
+		);
+	}
 }
 
 /**
@@ -325,7 +395,7 @@ async function migrateColumnRename(
 			// re-creates the new field definition cleanly on the next pass.
 			try {
 				if (row.id !== undefined && row.id !== null) {
-					await fields.deleteOne(row.id);
+					await fields.deleteOne(row.id, NO_EVENTS);
 				}
 			} catch (err) {
 				logger.warn(
@@ -367,10 +437,13 @@ async function seedLanguages(
 		);
 		return defaultLang;
 	}
-	await items.createOne({
-		code: defaultLang,
-		name: localizeLangCode(defaultLang),
-	});
+	await items.createOne(
+		{
+			code: defaultLang,
+			name: localizeLangCode(defaultLang),
+		},
+		NO_EVENTS,
+	);
 	logger.info(`[i18n-email] Seeded language ${defaultLang} (project default).`);
 	return defaultLang;
 }
@@ -408,7 +481,7 @@ async function capitalizeLanguageNames(
 		const fixed = capitalizeFirst(row.name, row.code);
 		if (fixed === row.name) continue;
 		try {
-			await items.updateOne(row.code, { name: fixed });
+			await items.updateOne(row.code, { name: fixed }, NO_EVENTS);
 			logger.info(`[i18n-email] Capitalized language name ${row.code}: ${fixed}.`);
 		} catch (err) {
 			logger.warn(
@@ -447,16 +520,20 @@ async function seedTemplates(
 		const diskBody = await readTemplateFromDisk(templatesPath, seed.template_key);
 		const body = diskBody ?? seed.body;
 		const checksum = computeChecksum({ body });
-		const id = await items.createOne({
-			template_key: seed.template_key,
-			category: seed.category,
-			body,
-			description: seed.description,
-			is_active: true,
-			is_protected: isProtectedKey(seed.template_key),
-			checksum,
-			last_synced_at: null,
-		});
+		const id = await items.createOne(
+			{
+				id: templateId(seed.template_key),
+				template_key: seed.template_key,
+				category: seed.category,
+				body,
+				description: seed.description,
+				is_active: true,
+				is_protected: isProtectedKey(seed.template_key),
+				checksum,
+				last_synced_at: null,
+			},
+			NO_EVENTS,
+		);
 		logger.info(
 			`[i18n-email] Seeded template ${seed.template_key}${diskBody ? ' (from existing disk file)' : ''}.`,
 		);
@@ -478,9 +555,9 @@ async function seedTemplates(
 /**
  * Seed translation rows. For each protected template:
  *   - Insert one empty row for the project's default language
- *     (`subject: ''`, `from_name: null`, `from_address: null`,
- *     `i18n_variables: {}`) so admins fill in their primary-language
- *     copy themselves.
+ *     (`subject: null`, `from_name: null`, `from_address: null`,
+ *     `i18n_variables` = the empty scaffold derived from the body) so
+ *     admins fill in their primary-language copy themselves.
  *   - If the default is not `en-US`, also insert the English
  *     suggested-copy row from `SEED_TRANSLATIONS` so there's a
  *     working fallback out of the box.
@@ -529,10 +606,10 @@ async function seedTranslations(
 		templateKey: string,
 		languagesCode: string,
 		payload: {
-			subject: string;
+			subject: string | null;
 			from_name: string | null;
 			from_address: string | null;
-			i18n_variables: Record<string, string>;
+			i18n_variables: I18nVariables;
 		},
 		label: string,
 		languageExists: boolean,
@@ -559,11 +636,15 @@ async function seedTranslations(
 		});
 		if (existing.length > 0) return;
 		try {
-			await items.createOne({
-				email_templates_id: parent.id,
-				languages_code: languagesCode,
-				...payload,
-			});
+			await items.createOne(
+				{
+					id: translationId(String(parent.id), languagesCode),
+					email_templates_id: parent.id,
+					languages_code: languagesCode,
+					...payload,
+				},
+				NO_EVENTS,
+			);
 		} catch (err) {
 			logger.warn(
 				`[i18n-email] Skipping translation seed for ${templateKey}/${languagesCode}: ${(err as Error).message}`,
@@ -574,11 +655,19 @@ async function seedTranslations(
 	}
 
 	for (const tpl of templateRows) {
-		// Empty placeholder for the project's default language.
+		// Empty placeholder for the project's default language. The
+		// i18n_variables scaffold is computed here because bootstrap
+		// writes with `emitEvents: false`, so the pre-fill filter does
+		// not run for these rows.
 		await upsert(
 			tpl.template_key,
 			defaultLang,
-			{ subject: '', from_name: null, from_address: null, i18n_variables: {} },
+			{
+				subject: null,
+				from_name: null,
+				from_address: null,
+				i18n_variables: buildInitialStrings(tpl.body ?? '', tpl.template_key, logger),
+			},
 			'empty default-lang placeholder',
 			languagesExist.get(defaultLang) ?? false,
 		);
@@ -593,7 +682,7 @@ async function seedTranslations(
 						subject: seed.subject,
 						from_name: seed.from_name,
 						from_address: seed.from_address,
-						i18n_variables: seed.i18n_variables,
+						i18n_variables: coerceI18nVariables(seed.i18n_variables),
 					},
 					'English suggested copy',
 					languagesExist.get('en-US') ?? false,
@@ -621,23 +710,48 @@ async function seedVariables(
 			limit: 1,
 		});
 		if (existing.length > 0) continue;
-		await items.createOne({
-			template_key: seed.template_key,
-			variable_name: seed.variable_name,
-			is_required: seed.is_required,
-			is_protected: isProtectedKey(seed.template_key),
-			description: seed.description,
-			example_value: seed.example_value,
-		});
+		await items.createOne(
+			{
+				id: variableId(seed.template_key, seed.variable_name),
+				template_key: seed.template_key,
+				variable_name: seed.variable_name,
+				is_required: seed.is_required,
+				is_protected: isProtectedKey(seed.template_key),
+				description: seed.description,
+				example_value: seed.example_value,
+			},
+			NO_EVENTS,
+		);
 		logger.info(`[i18n-email] Seeded variable ${seed.template_key}.${seed.variable_name}.`);
 	}
 }
 
 /**
- * Idempotent bootstrap: creates collections + relations if missing,
- * seeds protected templates (preferring any existing on-disk body over
- * the shipped default), seeds translations + variables, and flushes
- * each template body to disk. Never overwrites admin-edited DB rows.
+ * Flush every existing template body to disk. Used in `schema` mode so
+ * templates imported by directus-extension-schema-sync reach
+ * `EMAIL_TEMPLATES_PATH` on boot even though seeding is skipped.
+ */
+async function flushTemplatesToDisk(
+	templatesPath: string,
+	services: ExtensionsServices,
+	schema: SchemaOverview,
+	logger: Pick<Logger, 'info' | 'warn' | 'error'>,
+): Promise<void> {
+	const rows = await fetchAllTemplateRows(services, schema);
+	for (const row of rows) {
+		await syncTemplateBody(row, templatesPath, services, schema, logger, 'bootstrap');
+	}
+}
+
+/**
+ * Idempotent bootstrap, gated by `I18N_EMAIL_BOOTSTRAP`:
+ *   - `full`   — collections + relations + seeds + disk flush.
+ *   - `schema` — collections + relations only (+ disk flush of imported
+ *                rows); seeding is owned by schema-sync.
+ *   - `off`    — nothing.
+ * Seeds protected templates (preferring any existing on-disk body over
+ * the shipped default), seeds translations + variables, and flushes each
+ * template body to disk. Never overwrites admin-edited DB rows.
  */
 export async function runBootstrap(
 	templatesPath: string,
@@ -652,11 +766,20 @@ export async function runBootstrap(
 
 	bootstrapInFlight = (async () => {
 		logger.info('[i18n-email] Bootstrap started.');
+		const mode = resolveBootstrapMode(env, logger);
 		try {
+			if (mode === 'off') {
+				logger.info('[i18n-email] Bootstrap disabled (I18N_EMAIL_BOOTSTRAP=off).');
+				bootstrapRan = true;
+				return;
+			}
+
 			let schema = await getSchema();
 			for (const payload of ALL_COLLECTIONS) {
 				await createCollectionIfMissing(payload, services, schema, logger);
 			}
+			schema = await getSchema();
+			await clearLegacyArchiveField(services, schema, logger);
 			schema = await getSchema();
 			// Rename legacy columns BEFORE migrateCollectionFields would
 			// otherwise see them as missing and create them empty.
@@ -670,14 +793,23 @@ export async function runBootstrap(
 			schema = await getSchema();
 			await migrateRelationsMeta(services, schema, logger);
 			schema = await getSchema();
-			const defaultLang = await seedLanguages(services, schema, env, logger);
-			await capitalizeLanguageNames(services, schema, logger);
-			const templateRows = await seedTemplates(templatesPath, services, schema, logger);
-			await seedTranslations(templateRows, defaultLang, services, schema, logger);
-			await seedVariables(services, schema, logger);
-			// Flush each template body to disk so Directus's MailService can render it.
-			for (const row of templateRows) {
-				await syncTemplateBody(row, templatesPath, services, schema, logger, 'bootstrap');
+
+			// Pin the project default language from env before any seeding.
+			await ensureDefaultLanguage(services, schema, env, logger);
+
+			if (mode === 'schema') {
+				logger.info('[i18n-email] Seeding skipped (I18N_EMAIL_BOOTSTRAP=schema).');
+				await flushTemplatesToDisk(templatesPath, services, schema, logger);
+			} else {
+				const defaultLang = await seedLanguages(services, schema, env, logger);
+				await capitalizeLanguageNames(services, schema, logger);
+				const templateRows = await seedTemplates(templatesPath, services, schema, logger);
+				await seedTranslations(templateRows, defaultLang, services, schema, logger);
+				await seedVariables(services, schema, logger);
+				// Flush each template body to disk so Directus's MailService can render it.
+				for (const row of templateRows) {
+					await syncTemplateBody(row, templatesPath, services, schema, logger, 'bootstrap');
+				}
 			}
 			bootstrapRan = true;
 			logger.info('[i18n-email] Bootstrap completed.');

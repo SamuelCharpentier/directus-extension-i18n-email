@@ -22,6 +22,16 @@ export const PROTECTED_TEMPLATE_KEYS = [
 
 export const DEFAULT_FALLBACK_LANG = 'en-US';
 
+/**
+ * `I18N_EMAIL_BOOTSTRAP` modes:
+ *   - `full`   — create/migrate schema AND seed data (default).
+ *   - `schema` — create/migrate schema only; data is owned by
+ *                directus-extension-schema-sync.
+ *   - `off`    — do nothing.
+ */
+export const BOOTSTRAP_MODES = ['full', 'schema', 'off'] as const;
+export type BootstrapMode = (typeof BOOTSTRAP_MODES)[number];
+
 export const TEMPLATE_CATEGORIES = [
 	'system',
 	'layout',

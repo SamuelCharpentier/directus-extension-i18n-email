@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { makeServices, makeLogger, makeSchema } from './helpers';
 import { runBootstrap, __INTERNAL__ } from '../src/bootstrap';
+import { templateId, translationId } from '../src/ids';
 
 describe('runBootstrap', () => {
 	let dir: string;
@@ -310,10 +311,11 @@ describe('runBootstrap', () => {
 		// One translation row per template: empty fr-FR placeholder only.
 		expect(s._stores.email_template_translations?.length).toBe(5);
 		const frBaseRow = s._stores.email_template_translations!.find(
-			(r: any) => r.languages_code === 'fr-FR',
+			(r: any) => r.languages_code === 'fr-FR' && r.email_templates_id === templateId('base'),
 		);
-		expect(frBaseRow.subject).toBe('');
-		expect(frBaseRow.i18n_variables).toEqual({});
+		expect(frBaseRow.subject).toBeNull();
+		expect(Object.keys(frBaseRow.i18n_variables.in_template)).toContain('footer_note');
+		expect(frBaseRow.i18n_variables.unused).toEqual({});
 		expect(logger.warn).toHaveBeenCalledWith(
 			expect.stringContaining('Skipping translation seed for base/en-US'),
 		);
@@ -986,10 +988,174 @@ describe('runBootstrap', () => {
 			});
 			const logger = makeLogger();
 			await runBootstrap(dir, s as any, getSchema, {}, logger);
-			expect(updateOne).toHaveBeenCalledWith('fr-FR', { name: 'Français' });
-			expect(updateOne).toHaveBeenCalledWith('de-DE', { name: 'Deutsch' });
+			expect(updateOne).toHaveBeenCalledWith('fr-FR', { name: 'Français' }, { emitEvents: false });
+			expect(updateOne).toHaveBeenCalledWith('de-DE', { name: 'Deutsch' }, { emitEvents: false });
 			expect(logger.warn).toHaveBeenCalledWith(
 				expect.stringContaining('Could not update language fr-FR name'),
+			);
+		});
+	});
+
+	describe('I18N_EMAIL_BOOTSTRAP modes', () => {
+		it('off: creates nothing and marks bootstrap done', async () => {
+			const s = makeServices();
+			const logger = makeLogger();
+			await runBootstrap(dir, s as any, getSchema, { I18N_EMAIL_BOOTSTRAP: 'off' }, logger);
+			expect(s._collectionsCreated.length).toBe(0);
+			expect(s._stores.email_templates?.length ?? 0).toBe(0);
+			expect(__INTERNAL__.ran).toBe(true);
+			expect(logger.info).toHaveBeenCalledWith(
+				expect.stringContaining('Bootstrap disabled'),
+			);
+			// Off mode must not create anything.
+			expect(s._mutationOpts.length).toBe(0);
+		});
+
+		it('schema: migrates schema but skips all seeds', async () => {
+			const s = makeServices();
+			const logger = makeLogger();
+			await runBootstrap(dir, s as any, getSchema, { I18N_EMAIL_BOOTSTRAP: 'schema' }, logger);
+			expect(s._collectionsCreated.length).toBeGreaterThanOrEqual(5);
+			expect(s._relationsCreated.length).toBe(2);
+			expect(s._stores.email_templates?.length ?? 0).toBe(0);
+			expect(s._stores.languages?.length ?? 0).toBe(0);
+			expect(logger.info).toHaveBeenCalledWith(
+				expect.stringContaining('Seeding skipped'),
+			);
+			expect(logger.info).not.toHaveBeenCalledWith(
+				expect.stringContaining('Seeded template'),
+			);
+		});
+
+		it('schema: flushes existing template bodies to disk', async () => {
+			const s = makeServices({
+				items: {
+					email_templates: {
+						rows: [{ id: 't1', template_key: 'imported', body: 'FROM_SYNC' }],
+					},
+				},
+			});
+			const logger = makeLogger();
+			await runBootstrap(dir, s as any, getSchema, { I18N_EMAIL_BOOTSTRAP: 'schema' }, logger);
+			expect(await readFile(join(dir, 'imported.liquid'), 'utf-8')).toBe('FROM_SYNC');
+		});
+
+		it('unknown value warns and falls back to full', async () => {
+			const s = makeServices();
+			const logger = makeLogger();
+			await runBootstrap(dir, s as any, getSchema, { I18N_EMAIL_BOOTSTRAP: 'wat' }, logger);
+			expect(logger.warn).toHaveBeenCalledWith(
+				expect.stringContaining('Unknown I18N_EMAIL_BOOTSTRAP'),
+			);
+			expect(s._stores.email_templates?.length).toBe(5);
+		});
+	});
+
+	it('performs every mutation with emitEvents disabled', async () => {
+		const s = makeServices();
+		const logger = makeLogger();
+		await runBootstrap(dir, s as any, getSchema, {}, logger);
+		expect(s._mutationOpts.length).toBeGreaterThan(0);
+		for (const m of s._mutationOpts) {
+			expect(m.opts, `${m.collection}.${m.method}`).toEqual({ emitEvents: false });
+		}
+	});
+
+	it('seeds templates, translations and variables with deterministic ids', async () => {
+		const s = makeServices();
+		const logger = makeLogger();
+		await runBootstrap(dir, s as any, getSchema, {}, logger);
+		const base = s._stores.email_templates!.find((r: any) => r.template_key === 'base');
+		expect(base.id).toBe(templateId('base'));
+		const baseEn = s._stores.email_template_translations!.find(
+			(r: any) => r.email_templates_id === templateId('base') && r.languages_code === 'en-US',
+		);
+		expect(baseEn.id).toBe(translationId(templateId('base'), 'en-US'));
+	});
+
+	it('applies DEFAULT_LANGUAGE before seeding so the seed language is right', async () => {
+		const s = makeServices({
+			settings: { readSingleton: async () => ({ default_language: 'en-US' }) },
+		});
+		const logger = makeLogger();
+		await runBootstrap(dir, s as any, getSchema, { DEFAULT_LANGUAGE: 'fr-CA' }, logger);
+		// settings-upsert happened with events disabled...
+		expect(s._settingsUpserts).toEqual([
+			{ payload: { default_language: 'fr-CA' }, opts: { emitEvents: false } },
+		]);
+		// ...and the freshly-seeded languages row is fr-CA.
+		expect(s._stores.languages!.map((r: any) => r.code)).toEqual(['fr-CA']);
+	});
+
+	describe('legacy archive_field migration', () => {
+		it('clears the archive keys when archive_field is is_active', async () => {
+			const s = makeServices({
+				collections: {
+					readOne: async (c: string) =>
+						c === 'email_templates'
+							? {
+									collection: c,
+									meta: {
+										icon: 'mail',
+										archive_field: 'is_active',
+										archive_value: 'false',
+										unarchive_value: 'true',
+									},
+								}
+							: { collection: c, meta: {} },
+				},
+			});
+			const logger = makeLogger();
+			await runBootstrap(dir, s as any, getSchema, {}, logger);
+			expect(s._collectionsUpdated.length).toBe(1);
+			expect(s._collectionsUpdated[0].collection).toBe('email_templates');
+			expect(s._collectionsUpdated[0].payload.meta).toEqual({
+				icon: 'mail',
+				archive_field: null,
+				archive_value: null,
+				unarchive_value: null,
+			});
+			expect(logger.info).toHaveBeenCalledWith(
+				expect.stringContaining('Cleared legacy archive_field'),
+			);
+		});
+
+		it('is a no-op when archive_field is not is_active', async () => {
+			const s = makeServices({
+				collections: {
+					readOne: async (c: string) => ({ collection: c, meta: { archive_field: 'other' } }),
+				},
+			});
+			const logger = makeLogger();
+			await runBootstrap(dir, s as any, getSchema, {}, logger);
+			expect(s._collectionsUpdated.length).toBe(0);
+		});
+
+		it('is a no-op when the collection has no archive_field', async () => {
+			const s = makeServices({
+				collections: { readOne: async (c: string) => ({ collection: c, meta: {} }) },
+			});
+			const logger = makeLogger();
+			await runBootstrap(dir, s as any, getSchema, {}, logger);
+			expect(s._collectionsUpdated.length).toBe(0);
+		});
+
+		it('warns and continues when updateOne throws', async () => {
+			const s = makeServices({
+				collections: {
+					readOne: async (c: string) =>
+						c === 'email_templates'
+							? { collection: c, meta: { archive_field: 'is_active' } }
+							: { collection: c, meta: {} },
+					updateOne: async () => {
+						throw new Error('boom');
+					},
+				},
+			});
+			const logger = makeLogger();
+			await runBootstrap(dir, s as any, getSchema, {}, logger);
+			expect(logger.warn).toHaveBeenCalledWith(
+				expect.stringContaining('Could not clear archive_field'),
 			);
 		});
 	});

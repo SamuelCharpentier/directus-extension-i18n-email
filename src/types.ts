@@ -41,7 +41,7 @@ export type EmailTemplateTranslationRow = {
 	id?: string;
 	email_templates_id: string;
 	languages_code: string;
-	subject: string;
+	subject: string | null;
 	from_name: string | null;
 	/**
 	 * Optional per-language sender address override (bare email address,
@@ -82,7 +82,7 @@ export type SeedTemplate = {
 export type SeedTranslation = {
 	template_key: string;
 	languages_code: string;
-	subject: string;
+	subject: string | null;
 	from_name: string | null;
 	from_address: string | null;
 	i18n_variables: TranslationStrings;

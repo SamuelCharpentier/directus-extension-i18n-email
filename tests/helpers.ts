@@ -9,9 +9,16 @@ export type ItemsStore = Record<string, any[]>;
 export type ItemsServiceMock = {
 	readByQuery: (query?: any) => Promise<any[]>;
 	readMany: (keys: (string | number)[], query?: any) => Promise<any[]>;
-	createOne: (data: any) => Promise<string | number>;
-	updateOne: (id: string | number, data: any) => Promise<string | number>;
-	deleteOne: (id: string | number) => Promise<string | number>;
+	createOne: (data: any, opts?: any) => Promise<string | number>;
+	updateOne: (id: string | number, data: any, opts?: any) => Promise<string | number>;
+	deleteOne: (id: string | number, opts?: any) => Promise<string | number>;
+};
+
+export type MutationRecord = {
+	collection: string;
+	method: 'createOne' | 'updateOne' | 'deleteOne';
+	id?: string | number;
+	opts?: any;
 };
 
 export type CollectionItemsInit = {
@@ -26,11 +33,15 @@ export type CollectionItemsInit = {
 
 export type ServicesInit = {
 	items?: Record<string, CollectionItemsInit>;
-	settings?: { readSingleton: (q?: any) => Promise<any> };
+	settings?: {
+		readSingleton: (q?: any) => Promise<any>;
+		upsertSingleton?: (payload: any, opts?: any) => Promise<any>;
+	};
 	mail?: { send: (opts: any) => Promise<any> };
 	collections?: Partial<{
 		readOne: (c: string) => Promise<any>;
 		createOne: (payload: any) => Promise<any>;
+		updateOne: (c: string, payload: any) => Promise<any>;
 	}>;
 	relations?: Partial<{
 		readOne: (c: string, f: string) => Promise<any>;
@@ -54,10 +65,14 @@ export type ServicesMock = {
 	_stores: ItemsStore;
 	_mailSends: any[];
 	_collectionsCreated: any[];
+	_collectionsUpdated: any[];
 	_relationsCreated: any[];
 	_relationsUpdated: any[];
 	_fieldsCreated: any[];
 	_fieldsUpdated: any[];
+	_mutationOpts: MutationRecord[];
+	_settingsUpserts: Array<{ payload: any; opts?: any }>;
+	_itemsServiceOpts: Array<{ collection: string; opts: any }>;
 };
 
 const matchFilter = (row: any, filter: any): boolean => {
@@ -83,16 +98,21 @@ export function makeServices(init: ServicesInit = {}): ServicesMock {
 	const stores: ItemsStore = {};
 	const mailSends: any[] = [];
 	const collectionsCreated: any[] = [];
+	const collectionsUpdated: any[] = [];
 	const relationsCreated: any[] = [];
 	const relationsUpdated: any[] = [];
 	const fieldsCreated: any[] = [];
 	const fieldsUpdated: any[] = [];
+	const mutationOpts: MutationRecord[] = [];
+	const settingsUpserts: Array<{ payload: any; opts?: any }> = [];
+	const itemsServiceOpts: Array<{ collection: string; opts: any }> = [];
 
 	for (const [name, cfg] of Object.entries(init.items ?? {})) {
 		stores[name] = cfg.rows ? [...cfg.rows] : [];
 	}
 
 	function ItemsService(collection: string, _opts: any): ItemsServiceMock {
+		itemsServiceOpts.push({ collection, opts: _opts });
 		if (!stores[collection]) stores[collection] = [];
 		const rows = () => stores[collection]!;
 		const cfg = init.items?.[collection] ?? {};
@@ -111,19 +131,22 @@ export function makeServices(init: ServicesInit = {}): ServicesMock {
 				rows().filter((r) => keys.map(String).includes(String(r.id))),
 			createOne:
 				cfg.createOne ??
-				(async (data: any) => {
+				(async (data: any, opts?: any) => {
+					mutationOpts.push({ collection, method: 'createOne', opts });
 					const id = data.id ?? nextId();
 					rows().push({ ...data, id });
 					return id;
 				}),
 			updateOne:
 				cfg.updateOne ??
-				(async (id: string | number, data: any) => {
+				(async (id: string | number, data: any, opts?: any) => {
+					mutationOpts.push({ collection, method: 'updateOne', id, opts });
 					const idx = rows().findIndex((r) => String(r.id) === String(id));
 					if (idx >= 0) rows()[idx] = { ...rows()[idx], ...data };
 					return id;
 				}),
-			deleteOne: async (id: string | number) => {
+			deleteOne: async (id: string | number, opts?: any) => {
+				mutationOpts.push({ collection, method: 'deleteOne', id, opts });
 				const idx = rows().findIndex((r) => String(r.id) === String(id));
 				if (idx >= 0) rows().splice(idx, 1);
 				return id;
@@ -137,6 +160,12 @@ export function makeServices(init: ServicesInit = {}): ServicesMock {
 		// `init.settings`.
 		return {
 			readSingleton: init.settings?.readSingleton ?? (async () => ({})),
+			upsertSingleton:
+				init.settings?.upsertSingleton ??
+				(async (payload: any, opts?: any) => {
+					settingsUpserts.push({ payload, opts });
+					return payload;
+				}),
 		};
 	}
 
@@ -163,6 +192,12 @@ export function makeServices(init: ServicesInit = {}): ServicesMock {
 				(async (payload: any) => {
 					collectionsCreated.push(payload);
 					return payload.collection;
+				}),
+			updateOne:
+				init.collections?.updateOne ??
+				(async (c: string, payload: any) => {
+					collectionsUpdated.push({ collection: c, payload });
+					return { collection: c, ...payload };
 				}),
 		};
 	}
@@ -221,10 +256,14 @@ export function makeServices(init: ServicesInit = {}): ServicesMock {
 		_stores: stores,
 		_mailSends: mailSends,
 		_collectionsCreated: collectionsCreated,
+		_collectionsUpdated: collectionsUpdated,
 		_relationsCreated: relationsCreated,
 		_relationsUpdated: relationsUpdated,
 		_fieldsCreated: fieldsCreated,
 		_fieldsUpdated: fieldsUpdated,
+		_mutationOpts: mutationOpts,
+		_settingsUpserts: settingsUpserts,
+		_itemsServiceOpts: itemsServiceOpts,
 	};
 }
 

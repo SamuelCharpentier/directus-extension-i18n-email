@@ -119,7 +119,7 @@ export const SEED_TRANSLATIONS: SeedTranslation[] = [
 	{
 		template_key: BASE_LAYOUT_KEY,
 		languages_code: 'en-US',
-		subject: '',
+		subject: null,
 		from_name: 'Your Organization',
 		from_address: null,
 		i18n_variables: {
