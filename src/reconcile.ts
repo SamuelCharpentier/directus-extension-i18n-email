@@ -1,4 +1,4 @@
-import type { ExtensionsServices, SchemaOverview } from '@directus/types';
+import type { AbstractServiceOptions, ExtensionsServices, SchemaOverview } from '@directus/types';
 import type {
 	EmailTemplateTranslationRow,
 	I18nVariables,
@@ -226,11 +226,13 @@ export async function fetchTemplateBodyById(
 	services: ExtensionsServices,
 	schema: SchemaOverview,
 	logger: Pick<Logger, 'warn'>,
+	knex?: AbstractServiceOptions['knex'],
 ): Promise<{ template_key: string; body: string } | null> {
 	try {
 		const items = new services.ItemsService(TEMPLATES_COLLECTION, {
 			schema,
 			accountability: null,
+			...(knex ? { knex } : {}),
 		});
 		const rows = (await items.readMany([id], {
 			fields: ['template_key', 'body'],
