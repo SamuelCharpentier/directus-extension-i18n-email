@@ -62,15 +62,28 @@ See the [official installation guide](https://docs.directus.io/extensions/instal
 
 ## First Boot
 
-On first start the extension will:
+Bootstrap behaviour is controlled by `I18N_EMAIL_BOOTSTRAP`:
+
+| Mode     | Creates/migrates collections, fields, relations | Seeds data + flushes bodies |
+| -------- | ----------------------------------------------- | --------------------------- |
+| `full` (default) | yes                                    | yes                         |
+| `schema` | yes                                             | no (only flushes existing template bodies to disk) |
+| `off`    | no                                              | no                          |
+
+On a fresh DB the extension will:
 
 1. Create the `languages`, `email_templates`, `email_template_translations`, `email_template_variables`, `email_template_sync_audit`, and `email_extension_user_prefs` collections (and the relations between them) if missing.
-2. Seed the `languages` collection from your project's default language (`directus_settings.default_language`). If the default isn't `en-US`, an `en-US` row is also seeded so the suggested English copy has a home. Each row's `name` is auto-populated from `code` via `Intl.DisplayNames` (e.g. `fr-FR` → "French (France)") and used as the tab label in the translations interface. If `languages` is already populated, bootstrap leaves it alone.
-3. Seed protected system templates (`base`, `password-reset`, `user-invitation`, `user-registration`, `admin-error`) — one `email_templates` row each, then one `email_template_translations` row per template per seeded language: an empty placeholder for the project's default language, plus the English suggested copy when that default isn't `en-US`.
-4. Seed required-variable entries in `email_template_variables` for the system templates.
-5. Write each template body to `EMAIL_TEMPLATES_PATH/<template_key>.liquid`. If a `.liquid` file already exists on disk for a key with no DB row yet, the disk contents take precedence over the shipped default (preserves admin edits from earlier filesystem-based installs).
+2. Pin the project default language when `DEFAULT_LANGUAGE` is set (see below), before seeding.
+3. Seed the `languages` collection from the project's default language (`DEFAULT_LANGUAGE` → `directus_settings.default_language`). If the default isn't `en-US`, an `en-US` row is also seeded so the suggested English copy has a home. Each row's `name` is auto-populated from `code` via `Intl.DisplayNames` (e.g. `fr-FR` → "French (France)") and used as the tab label in the translations interface. If `languages` is already populated, bootstrap leaves it alone.
+4. Seed protected system templates (`base`, `password-reset`, `user-invitation`, `user-registration`, `admin-error`) — one `email_templates` row each, then one `email_template_translations` row per template per seeded language: an empty placeholder for the project's default language, plus the English suggested copy when that default isn't `en-US`.
+5. Seed required-variable entries in `email_template_variables` for the system templates.
+6. Write each template body to `EMAIL_TEMPLATES_PATH/<template_key>.liquid`. If a `.liquid` file already exists on disk for a key with no DB row yet, the disk contents take precedence over the shipped default (preserves admin edits from earlier filesystem-based installs).
+
+Seeded and filter-created rows use **deterministic UUIDs** derived from their natural key (`template_key`, `template_key` + language, `template_key` + variable name). Two environments that seed independently therefore end up with the same primary keys, which lets `directus-extension-schema-sync` match rows without any ID remapping. Rows an admin creates keep their auto-generated IDs.
 
 The bootstrap also runs a graceful field/relation migration on every boot — it upserts field meta and relation meta against the schema definitions in this extension, but never alters column types or drops fields.
+
+> **SQLite note.** SQLite is served through a single database connection. Custom hooks that query the DB **inside a filter** must reuse `context.database` (the surrounding transaction); a query on a fresh connection deadlocks for 60s and stalls every concurrent request with `Knex: Timeout acquiring a connection`. This extension does this correctly, but the same rule applies to any hook you add.
 
 <br />
 
@@ -82,7 +95,7 @@ The bootstrap also runs a graceful field/relation migration on every boot — it
 
 The extension registers an `email.send` filter. For every outgoing email:
 
-1. Resolves the recipient's language (full BCP-47): `directus_users.language` of the recipient → `directus_settings.default_language` → `I18N_EMAIL_FALLBACK_LANG` → `en-US`.
+1. Resolves the recipient's language (full BCP-47): `directus_users.language` of the recipient → `DEFAULT_LANGUAGE` → `directus_settings.default_language` → `I18N_EMAIL_FALLBACK_LANG` → `en-US`.
 2. Fetches the active `email_templates` row for `template_key = template.name` plus its `email_template_translations` row for the effective language. Falls back to the default-language translation when the effective-language row is missing or is the empty-placeholder shape (blank subject AND empty/null `i18n_variables.in_template`).
 3. Validates required variables from `email_template_variables`. Missing variables abort the send and trigger an admin notification.
 4. Pre-renders the translation's `subject`, `from_name`, `from_address`, and every value in its `i18n_variables.in_template` map through Liquid using the same data context the body will see. Only the `in_template` half is sent — `unused` entries are kept in the DB for re-use but never reach the recipient.
@@ -103,6 +116,42 @@ Whenever an `email_templates.body` is created or updated, the extension parses t
 This means the variables editor is always in sync with what the template actually uses, without you having to bookkeep keys by hand. The custom interfaces (see [Editor Interfaces](#editor-interfaces)) trigger the same reconcile on demand from the form.
 
 Whenever an `email_templates` row is created or its `body` / `template_key` is updated, the extension re-writes `<template_key>.liquid` atomically and appends to `email_template_sync_audit`.
+
+<br />
+
+---
+
+<br />
+
+## Syncing with directus-extension-schema-sync
+
+Use [directus-extension-schema-sync](https://github.com/bcc-code/directus-schema-sync) to push templates, translations and variables from a local instance to prod without committing the database itself.
+
+Recommended environment:
+
+| Environment | `SCHEMA_SYNC` | `I18N_EMAIL_BOOTSTRAP` |
+| ----------- | ------------- | ---------------------- |
+| Local       | `BOTH`        | `full` (default)       |
+| Production  | `IMPORT`      | `schema`               |
+
+With `I18N_EMAIL_BOOTSTRAP=schema` on prod, this extension owns the schema and the prod database receives its rows from schema-sync (which ships the deterministic IDs described in [First Boot](#first-boot)), so nothing is seeded twice.
+
+Add these collections to `schema-sync/config.js` in dependency order:
+
+```js
+languages: {},
+email_templates: {},
+email_template_translations: {},
+email_template_variables: {},
+```
+
+Do **not** sync `email_template_sync_audit` or `email_extension_user_prefs` — they are per-environment bookkeeping.
+
+Notes:
+
+- **`emitEvents`** defaults to `true`. The hooks here are transaction-safe, so imports behave; leaving events on also flushes each imported template body to disk via the create/update actions. The boot-time flush in `schema` mode is a backstop.
+- **Primary-key matching** works without `getKey` because seeded rows use deterministic UUIDs. Rows created by hand get random IDs, are created once (locally) and travel with their ID.
+- **Deletions:** without `SCHEMA_SYNC_MERGE`, an import **deletes** every row in the configured collection that is not present in the export — for example a template created only on prod. If `emitEvents` is on, deleting a protected template throws in this extension's delete guard and aborts the import. Prefer `merge` mode, or keep all protected templates in the export.
 
 <br />
 
@@ -172,7 +221,9 @@ Extension-specific:
 
 | Variable                        | Default | Description                                                                                                  |
 | ------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------ |
-| `I18N_EMAIL_FALLBACK_LANG`      | `en-US` | BCP-47 language tag used when `directus_settings.default_language` is null.                                  |
+| `I18N_EMAIL_BOOTSTRAP`          | `full`  | `full` \| `schema` \| `off` — see [First Boot](#first-boot). Use `schema` on prod when data is owned by schema-sync. |
+| `DEFAULT_LANGUAGE`              | —       | BCP-47 tag written into `directus_settings.default_language` on boot when it differs. Env wins, so it is enforced on every restart. Also the first choice for the seed language. |
+| `I18N_EMAIL_FALLBACK_LANG`      | `en-US` | BCP-47 tag used at send time when both `DEFAULT_LANGUAGE` and `directus_settings.default_language` are unset. |
 | `I18N_EMAIL_FALLBACK_FROM_NAME` | —       | Display name used when a translation row has no `from_name`. Falls back to `directus_settings.project_name`. |
 
 <br />
@@ -225,7 +276,7 @@ One row per template (language-agnostic).
 | `body`           | text    | Full Liquid template (e.g. `{% layout "base" %}{% block content %}…{% endblock %}`). Mirrored to disk. |
 | `translations`   | alias   | o2m → `email_template_translations`. Renders as the translations interface.                            |
 | `description`    | text?   | Admin-facing explanation                                                                               |
-| `is_active`      | boolean | Disable without deleting (also drives the archive toggle)                                              |
+| `is_active`      | boolean | Disable without deleting. Inactive templates stay visible in the list but are skipped by the send hook. |
 | `is_protected`   | boolean | Protected rows cannot be deleted (system templates + `base` + `admin-error`)                           |
 | `checksum`       | string  | SHA-256 of `body` — maintained by the create/update filter                                             |
 | `last_synced_at` | ts?     | Last successful filesystem sync                                                                        |
@@ -417,7 +468,7 @@ The body file at `EMAIL_TEMPLATES_PATH/order-shipped.liquid` is created automati
 For each outgoing email, the effective language is the first non-null of:
 
 1. **User language** — `directus_users.language` of the recipient (full BCP-47, e.g. `fr-CA`).
-2. **Project default** — `directus_settings.default_language` (full BCP-47).
+2. **Project default** — `DEFAULT_LANGUAGE` env → `directus_settings.default_language` (full BCP-47).
 3. **`I18N_EMAIL_FALLBACK_LANG`** — used when the project default is null.
 4. **`en-US`** — hard-coded last resort.
 
