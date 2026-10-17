@@ -1,4 +1,4 @@
-import type { EmailOptions, HookConfig } from '@directus/types';
+import type { EmailOptions, HookConfig, SchemaOverview } from '@directus/types';
 import { runBootstrap } from './bootstrap';
 import { runSendFilter } from './send';
 import { syncTemplateBody, deleteTemplateFile } from './sync';
@@ -10,6 +10,7 @@ import {
 } from './constants';
 import { computeChecksum } from './integrity';
 import { localizeLangCode } from './directus';
+import { templateId, translationId, variableId } from './ids';
 import {
 	buildInitialStrings,
 	coerceI18nVariables,
@@ -53,6 +54,44 @@ const hook: HookConfig = (
 		void runBootstrap(templatesPathFromEnv(env), services, getSchema, env, logger, database);
 	};
 
+	// Build ItemsService options for a filter, reusing the caller's
+	// transaction (`context.database`) and schema when Directus supplies
+	// them. On SQLite the pool holds a single connection: opening any DB
+	// query without the transaction handle deadlocks for 60s and stalls
+	// every other request with it.
+	const svcOpts = (context: any, fallbackSchema: SchemaOverview) => ({
+		schema: context?.schema ?? fallbackSchema,
+		accountability: null,
+		...(context?.database ? { knex: context.database } : {}),
+	});
+
+	// Give a filter-created row a deterministic primary key so the same
+	// row seeded independently in another environment resolves to the
+	// same id for directus-extension-schema-sync. No-op when the caller
+	// already supplied an id (e.g. a schema-sync import). On the rare
+	// collision (a template_key reused after a rename) the id stays
+	// unset and Directus generates a random one.
+	const assignDeterministicId = async (
+		collection: string,
+		candidate: string | null,
+		row: { id?: unknown },
+		context: any,
+	): Promise<void> => {
+		if (!candidate || row.id) return;
+		try {
+			const schema = context?.schema ?? (await getSchema());
+			const items = new services.ItemsService(collection, svcOpts(context, schema));
+			const existing = await items.readByQuery({
+				filter: { id: { _eq: candidate } },
+				fields: ['id'],
+				limit: 1,
+			});
+			if (existing.length === 0) row.id = candidate;
+		} catch {
+			// Leave the id unset — Directus generates a random one.
+		}
+	};
+
 	if (typeof init === 'function') {
 		try {
 			init('app.after', () => kickBootstrap());
@@ -61,8 +100,6 @@ const hook: HookConfig = (
 		}
 	}
 	action('server.start', () => kickBootstrap());
-	// Eager kick-off — runBootstrap guards against concurrent runs.
-	kickBootstrap();
 
 	// ──────────── email.send filter ────────────
 	filter('email.send', async (payload: unknown) => {
@@ -133,12 +170,23 @@ const hook: HookConfig = (
 		}
 	});
 
-	// ──────────── Checksum maintenance ────────────
-	filter(`${TEMPLATES_COLLECTION}.items.create`, async (payload: unknown) => {
-		const row = payload as Partial<EmailTemplateRow>;
-		row.checksum = computeChecksum({ body: row.body ?? '' });
-		return row;
-	});
+	// ──────────── Checksum maintenance + deterministic id ────────────
+	filter(
+		`${TEMPLATES_COLLECTION}.items.create`,
+		async (payload: unknown, _meta: unknown, context: any) => {
+			const row = payload as Partial<EmailTemplateRow>;
+			row.checksum = computeChecksum({ body: row.body ?? '' });
+			if (row.template_key) {
+				await assignDeterministicId(
+					TEMPLATES_COLLECTION,
+					templateId(row.template_key),
+					row,
+					context,
+				);
+			}
+			return row;
+		},
+	);
 
 	// ──────────── Auto-fill languages.name from `code` ────────────
 	// The translations interface uses `name` as the tab label; we keep
@@ -164,62 +212,96 @@ const hook: HookConfig = (
 	// scaffolded form. Existing values supplied in the create payload
 	// are preserved (and coerced to the canonical shape if the caller
 	// supplied legacy bare keys, e.g. seeds).
-	filter(`${TRANSLATIONS_COLLECTION}.items.create`, async (payload: unknown) => {
-		const row = payload as Partial<EmailTemplateTranslationRow>;
-		const parentId = row.email_templates_id;
-		if (!parentId) return row;
-		const incoming = row.i18n_variables;
-		const incomingHasKeys =
-			(typeof incoming === 'string' && incoming.trim().length > 0) ||
-			(incoming &&
-				typeof incoming === 'object' &&
-				!Array.isArray(incoming) &&
-				Object.keys(incoming as Record<string, unknown>).length > 0);
-		if (incomingHasKeys) {
-			row.i18n_variables = coerceI18nVariables(
-				incoming as Parameters<typeof coerceI18nVariables>[0],
-			);
-			return row;
-		}
-		try {
-			const schema = await getSchema();
-			const tpl = await fetchTemplateBodyById(String(parentId), services, schema, logger);
-			if (tpl) {
-				row.i18n_variables = buildInitialStrings(tpl.body, tpl.template_key, logger);
+	filter(
+		`${TRANSLATIONS_COLLECTION}.items.create`,
+		async (payload: unknown, _meta: unknown, context: any) => {
+			const row = payload as Partial<EmailTemplateTranslationRow>;
+			const parentId = row.email_templates_id;
+			if (parentId && row.languages_code) {
+				await assignDeterministicId(
+					TRANSLATIONS_COLLECTION,
+					translationId(String(parentId), row.languages_code),
+					row,
+					context,
+				);
 			}
-		} catch (err) {
-			logger.warn(`[i18n-email] Translation pre-fill skipped: ${(err as Error).message}`);
-		}
-		if (!row.i18n_variables) row.i18n_variables = { in_template: {}, unused: {} };
-		return row;
-	});
+			if (!parentId) return row;
+			const incoming = row.i18n_variables;
+			const incomingHasKeys =
+				(typeof incoming === 'string' && incoming.trim().length > 0) ||
+				(incoming &&
+					typeof incoming === 'object' &&
+					!Array.isArray(incoming) &&
+					Object.keys(incoming as Record<string, unknown>).length > 0);
+			if (incomingHasKeys) {
+				row.i18n_variables = coerceI18nVariables(
+					incoming as Parameters<typeof coerceI18nVariables>[0],
+				);
+				return row;
+			}
+			try {
+				const schema = context?.schema ?? (await getSchema());
+				const tpl = await fetchTemplateBodyById(
+					String(parentId),
+					services,
+					schema,
+					logger,
+					context?.database,
+				);
+				if (tpl) {
+					row.i18n_variables = buildInitialStrings(tpl.body, tpl.template_key, logger);
+				}
+			} catch (err) {
+				logger.warn(`[i18n-email] Translation pre-fill skipped: ${(err as Error).message}`);
+			}
+			if (!row.i18n_variables) row.i18n_variables = { in_template: {}, unused: {} };
+			return row;
+		},
+	);
+
+	// ──────────── Deterministic id for new variable registry rows ────────────
+	filter(
+		`${VARIABLES_COLLECTION}.items.create`,
+		async (payload: unknown, _meta: unknown, context: any) => {
+			const row = payload as Partial<EmailTemplateVariableRow>;
+			if (row.template_key && row.variable_name) {
+				await assignDeterministicId(
+					VARIABLES_COLLECTION,
+					variableId(row.template_key, row.variable_name),
+					row,
+					context,
+				);
+			}
+			return row;
+		},
+	);
 
 	// ──────────── Protected-row delete guards ────────────
-	filter(`${TEMPLATES_COLLECTION}.items.delete`, async (payload: unknown) => {
-		const ids = ((payload as (string | number)[] | undefined) ?? []).map(String);
-		if (ids.length === 0) return payload;
-		const schema = await getSchema();
-		const items = new services.ItemsService(TEMPLATES_COLLECTION, {
-			schema,
-			accountability: null,
-		});
-		const rows = (await items.readMany(ids, {
-			fields: ['id', 'template_key', 'is_protected'],
-		})) as Array<Pick<EmailTemplateRow, 'id' | 'template_key' | 'is_protected'>>;
-		const blocked = rows.filter((r) => r.is_protected);
-		if (blocked.length > 0) {
-			const keys = blocked.map((r) => r.template_key).join(', ');
-			throw new Error(
-				`[i18n-email] Cannot delete protected template row(s): ${keys}. Protected rows can be edited but not removed.`,
-			);
-		}
-		// Stash template_keys so the paired action hook can remove the
-		// matching .liquid files once the DB delete succeeds.
-		for (const r of rows) {
-			if (r.id && r.template_key) pendingFileDeletes.set(String(r.id), r.template_key);
-		}
-		return payload;
-	});
+	filter(
+		`${TEMPLATES_COLLECTION}.items.delete`,
+		async (payload: unknown, _meta: unknown, context: any) => {
+			const ids = ((payload as (string | number)[] | undefined) ?? []).map(String);
+			if (ids.length === 0) return payload;
+			const schema = context?.schema ?? (await getSchema());
+			const items = new services.ItemsService(TEMPLATES_COLLECTION, svcOpts(context, schema));
+			const rows = (await items.readMany(ids, {
+				fields: ['id', 'template_key', 'is_protected'],
+			})) as Array<Pick<EmailTemplateRow, 'id' | 'template_key' | 'is_protected'>>;
+			const blocked = rows.filter((r) => r.is_protected);
+			if (blocked.length > 0) {
+				const keys = blocked.map((r) => r.template_key).join(', ');
+				throw new Error(
+					`[i18n-email] Cannot delete protected template row(s): ${keys}. Protected rows can be edited but not removed.`,
+				);
+			}
+			// Stash template_keys so the paired action hook can remove the
+			// matching .liquid files once the DB delete succeeds.
+			for (const r of rows) {
+				if (r.id && r.template_key) pendingFileDeletes.set(String(r.id), r.template_key);
+			}
+			return payload;
+		},
+	);
 
 	action(`${TEMPLATES_COLLECTION}.items.delete`, async (meta: unknown) => {
 		const keys = ((meta as { keys?: (string | number)[] }).keys ?? []).map(String);
@@ -233,26 +315,26 @@ const hook: HookConfig = (
 		}
 	});
 
-	filter(`${VARIABLES_COLLECTION}.items.delete`, async (payload: unknown) => {
-		const ids = ((payload as (string | number)[] | undefined) ?? []).map(String);
-		if (ids.length === 0) return payload;
-		const schema = await getSchema();
-		const items = new services.ItemsService(VARIABLES_COLLECTION, {
-			schema,
-			accountability: null,
-		});
-		const rows = (await items.readMany(ids, {
-			fields: ['id', 'template_key', 'variable_name', 'is_protected'],
-		})) as EmailTemplateVariableRow[];
-		const blocked = rows.filter((r) => r.is_protected);
-		if (blocked.length > 0) {
-			const keys = blocked.map((r) => `${r.template_key}.${r.variable_name}`).join(', ');
-			throw new Error(
-				`[i18n-email] Cannot delete protected variable registry entr(ies): ${keys}.`,
-			);
-		}
-		return payload;
-	});
+	filter(
+		`${VARIABLES_COLLECTION}.items.delete`,
+		async (payload: unknown, _meta: unknown, context: any) => {
+			const ids = ((payload as (string | number)[] | undefined) ?? []).map(String);
+			if (ids.length === 0) return payload;
+			const schema = context?.schema ?? (await getSchema());
+			const items = new services.ItemsService(VARIABLES_COLLECTION, svcOpts(context, schema));
+			const rows = (await items.readMany(ids, {
+				fields: ['id', 'template_key', 'variable_name', 'is_protected'],
+			})) as EmailTemplateVariableRow[];
+			const blocked = rows.filter((r) => r.is_protected);
+			if (blocked.length > 0) {
+				const keys = blocked.map((r) => `${r.template_key}.${r.variable_name}`).join(', ');
+				throw new Error(
+					`[i18n-email] Cannot delete protected variable registry entr(ies): ${keys}.`,
+				);
+			}
+			return payload;
+		},
+	);
 };
 
 export default hook;

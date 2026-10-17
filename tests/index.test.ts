@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import hook from '../src/index';
 import { makeServices, makeLogger, makeSchema } from './helpers';
 import { __INTERNAL__ } from '../src/bootstrap';
+import { templateId, variableId } from '../src/ids';
 
 type AnyFn = (...args: any[]) => any;
 type Handlers = {
@@ -519,5 +520,102 @@ describe('hook registration', () => {
 			in_template: { body: '' },
 			unused: { heading: 'H', orphan: 'O' },
 		});
+	});
+});
+
+describe('filter transaction safety + deterministic ids', () => {
+	let dir: string;
+	beforeEach(async () => {
+		__INTERNAL__.reset();
+		dir = await mkdtemp(join(tmpdir(), 'i18n-email-hook-'));
+	});
+	afterEach(async () => {
+		if (__INTERNAL__.inFlight) await __INTERNAL__.inFlight;
+		await rm(dir, { recursive: true, force: true });
+	});
+
+	const TRX = { marker: 'trx' };
+
+	it('translation create filter queries through the caller transaction', async () => {
+		const { handlers, services } = register({ EMAIL_TEMPLATES_PATH: dir });
+		services._stores.email_templates = [
+			{ id: 'tpl-1', template_key: 'p', body: '{{ i18n.heading }}' },
+		];
+		services._itemsServiceOpts.length = 0;
+		await handlers.filters['email_template_translations.items.create']!(
+			{ email_templates_id: 'tpl-1', languages_code: 'en-US' },
+			{},
+			{ database: TRX, schema: makeSchema() },
+		);
+		expect(services._itemsServiceOpts.length).toBeGreaterThan(0);
+		for (const c of services._itemsServiceOpts) expect(c.opts.knex).toBe(TRX);
+	});
+
+	it('template delete filter queries through the caller transaction', async () => {
+		const { handlers, services } = register();
+		services._stores.email_templates = [
+			{ id: '2', template_key: 'custom', is_protected: false },
+		];
+		services._itemsServiceOpts.length = 0;
+		await handlers.filters['email_templates.items.delete']!(
+			['2'],
+			{},
+			{ database: TRX, schema: makeSchema() },
+		);
+		expect(services._itemsServiceOpts.length).toBeGreaterThan(0);
+		for (const c of services._itemsServiceOpts) expect(c.opts.knex).toBe(TRX);
+	});
+
+	it('variables delete filter queries through the caller transaction', async () => {
+		const { handlers, services } = register();
+		services._stores.email_template_variables = [
+			{ id: '2', template_key: 'x', variable_name: 'y', is_protected: false },
+		];
+		services._itemsServiceOpts.length = 0;
+		await handlers.filters['email_template_variables.items.delete']!(
+			['2'],
+			{},
+			{ database: TRX, schema: makeSchema() },
+		);
+		expect(services._itemsServiceOpts.length).toBeGreaterThan(0);
+		for (const c of services._itemsServiceOpts) expect(c.opts.knex).toBe(TRX);
+	});
+
+	it('template create filter assigns a deterministic id', async () => {
+		const { handlers } = register();
+		const out = (await handlers.filters['email_templates.items.create']!({
+			template_key: 'x',
+			body: 'b',
+		})) as any;
+		expect(out.id).toBe(templateId('x'));
+	});
+
+	it('template create filter keeps a caller-supplied id', async () => {
+		const { handlers } = register();
+		const out = (await handlers.filters['email_templates.items.create']!({
+			id: 'preset',
+			template_key: 'x',
+			body: 'b',
+		})) as any;
+		expect(out.id).toBe('preset');
+	});
+
+	it('template create filter falls back to random on id collision', async () => {
+		const { handlers, services } = register();
+		services._stores.email_templates = [{ id: templateId('x'), template_key: 'x' }];
+		const out = (await handlers.filters['email_templates.items.create']!({
+			template_key: 'x',
+			body: 'b',
+		})) as any;
+		expect(out.id).toBeUndefined();
+	});
+
+	it('variable create filter assigns a deterministic id', async () => {
+		const { handlers } = register();
+		const out = (await handlers.filters['email_template_variables.items.create']!({
+			template_key: 'base',
+			variable_name: 'org_name',
+		})) as any;
+		expect(out.id).toBe(variableId('base', 'org_name'));
 	});
 });
