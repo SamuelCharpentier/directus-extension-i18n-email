@@ -97,6 +97,31 @@ describe('schema', () => {
 		expect((cascade?.schema as any)?.on_delete).toBe('CASCADE');
 		expect((cascade?.meta as any)?.one_field).toBe('translations');
 	});
+	it('does not treat is_active as the archive field', () => {
+		const meta = EMAIL_TEMPLATES_COLLECTION.meta as any;
+		expect(meta.archive_field).toBeUndefined();
+		expect(meta.archive_value).toBeUndefined();
+		expect(meta.unarchive_value).toBeUndefined();
+	});
+	it('casts boolean fields so SQLite 0/1 renders correctly', () => {
+		for (const f of EMAIL_TEMPLATES_COLLECTION.fields) {
+			if (f.field === 'is_active' || f.field === 'is_protected') {
+				expect((f.meta as any)?.special, f.field).toContain('cast-boolean');
+			}
+		}
+		for (const f of EMAIL_TEMPLATE_VARIABLES_COLLECTION.fields) {
+			if (f.field === 'is_required' || f.field === 'is_protected') {
+				expect((f.meta as any)?.special, f.field).toContain('cast-boolean');
+			}
+		}
+	});
+	it('places description above the body and translations', () => {
+		const fields = EMAIL_TEMPLATES_COLLECTION.fields;
+		const sortOf = (name: string) => (fields.find((f) => f.field === name)?.meta as any)?.sort;
+		expect(sortOf('description')).toBeLessThan(sortOf('body'));
+		expect(sortOf('body')).toBeLessThan(sortOf('translations'));
+		expect(sortOf('is_protected')).toBeLessThan(sortOf('description'));
+	});
 });
 
 describe('seeds', () => {

@@ -110,15 +110,17 @@ export const LANGUAGES_COLLECTION_PAYLOAD: CollectionPayload = {
 };
 
 // ─────────────────────────── email_templates ───────────────────────────
+// `is_active` is deliberately NOT the collection's archive field. Directus
+// hides archived rows from the content list by default and turns delete
+// into archive, which makes a disabled template disappear and blocks
+// re-creating the same `template_key`. Instead `is_active` is a plain
+// boolean the send hook filters on, so disabled templates stay visible.
 export const EMAIL_TEMPLATES_COLLECTION: CollectionPayload = {
 	collection: TEMPLATES_COLLECTION,
 	meta: {
 		icon: 'mail',
 		note: 'Email templates. Liquid body is the source of truth; translations attached as o2m.',
 		display_template: '{{ template_key }}',
-		archive_field: 'is_active',
-		archive_value: 'false',
-		unarchive_value: 'true',
 		sort_field: 'template_key',
 	},
 	schema: { name: TEMPLATES_COLLECTION },
@@ -131,6 +133,7 @@ export const EMAIL_TEMPLATES_COLLECTION: CollectionPayload = {
 				interface: 'input',
 				required: true,
 				width: 'half',
+				sort: 1,
 				note: 'Machine identifier, e.g. "password-reset".',
 			},
 			schema: { is_nullable: false, is_unique: true },
@@ -145,13 +148,22 @@ export const EMAIL_TEMPLATES_COLLECTION: CollectionPayload = {
 				},
 				required: true,
 				width: 'half',
+				sort: 2,
 			},
 			schema: { is_nullable: false, default_value: 'custom' },
 		},
 		{
 			field: 'is_active',
 			type: 'boolean',
-			meta: { interface: 'boolean', width: 'half' },
+			meta: {
+				interface: 'boolean',
+				width: 'half',
+				sort: 3,
+				// Normalises SQLite's 0/1 storage to true/false on read;
+				// without it the editor toggle renders unchecked for a
+				// truthy row and saving persists `false`.
+				special: ['cast-boolean'],
+			},
 			schema: { is_nullable: false, default_value: true },
 		},
 		{
@@ -160,10 +172,18 @@ export const EMAIL_TEMPLATES_COLLECTION: CollectionPayload = {
 			meta: {
 				interface: 'boolean',
 				width: 'half',
+				sort: 4,
 				readonly: true,
+				special: ['cast-boolean'],
 				note: 'Protected rows cannot be deleted.',
 			},
 			schema: { is_nullable: false, default_value: false },
+		},
+		{
+			field: 'description',
+			type: 'text',
+			meta: { interface: 'input-multiline', width: 'full', sort: 5 },
+			schema: { is_nullable: true },
 		},
 		{
 			field: 'body',
@@ -173,6 +193,7 @@ export const EMAIL_TEMPLATES_COLLECTION: CollectionPayload = {
 				options: { language: 'htmlmixed', lineNumber: true },
 				note: 'Full Liquid template (e.g. {% layout "base" %}{% block content %}…{% endblock %}).',
 				width: 'full',
+				sort: 6,
 			},
 			schema: { is_nullable: false, default_value: '' },
 		},
@@ -188,24 +209,19 @@ export const EMAIL_TEMPLATES_COLLECTION: CollectionPayload = {
 					userLanguage: true,
 				},
 				width: 'full',
+				sort: 7,
 			},
-		},
-		{
-			field: 'description',
-			type: 'text',
-			meta: { interface: 'input-multiline', width: 'full' },
-			schema: { is_nullable: true },
 		},
 		{
 			field: 'checksum',
 			type: 'string',
-			meta: { interface: 'input', width: 'half', readonly: true, hidden: true },
+			meta: { interface: 'input', width: 'half', readonly: true, hidden: true, sort: 8 },
 			schema: { is_nullable: true },
 		},
 		{
 			field: 'last_synced_at',
 			type: 'timestamp',
-			meta: { interface: 'datetime', width: 'half', readonly: true },
+			meta: { interface: 'datetime', width: 'half', readonly: true, sort: 9 },
 			schema: { is_nullable: true },
 		},
 		createdAtField,
@@ -325,13 +341,13 @@ export const EMAIL_TEMPLATE_VARIABLES_COLLECTION: CollectionPayload = {
 		{
 			field: 'is_required',
 			type: 'boolean',
-			meta: { interface: 'boolean', width: 'half' },
+			meta: { interface: 'boolean', width: 'half', special: ['cast-boolean'] },
 			schema: { is_nullable: false, default_value: false },
 		},
 		{
 			field: 'is_protected',
 			type: 'boolean',
-			meta: { interface: 'boolean', width: 'half', readonly: true },
+			meta: { interface: 'boolean', width: 'half', readonly: true, special: ['cast-boolean'] },
 			schema: { is_nullable: false, default_value: false },
 		},
 		{
