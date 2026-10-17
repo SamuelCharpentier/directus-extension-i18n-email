@@ -72,7 +72,7 @@ async function writeAudit(
 			schema,
 			accountability: null,
 		});
-		await items.createOne({ template_key: templateKey, reason, action });
+		await items.createOne({ template_key: templateKey, reason, action }, { emitEvents: false });
 	} catch (err) {
 		logger.warn(`[i18n-email] Audit row skipped: ${(err as Error).message}`);
 	}
@@ -112,10 +112,14 @@ export async function syncTemplateBody(
 				schema,
 				accountability: null,
 			});
-			await items.updateOne(row.id, {
-				checksum: computeChecksum({ body: row.body }),
-				last_synced_at: new Date().toISOString(),
-			});
+			await items.updateOne(
+				row.id,
+				{
+					checksum: computeChecksum({ body: row.body }),
+					last_synced_at: new Date().toISOString(),
+				},
+				{ emitEvents: false },
+			);
 		} catch (err) {
 			logger.warn(
 				`[i18n-email] Failed to update sync metadata for ${row.template_key}: ${(err as Error).message}`,
