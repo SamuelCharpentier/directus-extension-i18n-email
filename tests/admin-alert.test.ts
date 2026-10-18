@@ -1,14 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { makeServices, makeLogger, makeSchema } from './helpers';
-import { notifyAdmins, isAdminErrorTemplate } from '../src/admin-alert';
-
-describe('isAdminErrorTemplate', () => {
-	it('matches admin-error key', () => {
-		expect(isAdminErrorTemplate('admin-error')).toBe(true);
-		expect(isAdminErrorTemplate('password-reset')).toBe(false);
-		expect(isAdminErrorTemplate(undefined)).toBe(false);
-	});
-});
+import { notifyAdmins } from '../src/admin-alert';
 
 describe('notifyAdmins', () => {
 	let logger: ReturnType<typeof makeLogger>;
@@ -28,6 +20,9 @@ describe('notifyAdmins', () => {
 		expect(s._mailSends.length).toBe(1);
 		expect(s._mailSends[0].template.name).toBe('admin-error');
 		expect(s._mailSends[0].to).toEqual(['admin@x.co']);
+		// Stamped so the filter passes it through untouched — it can
+		// never fail validation and never trigger a nested alert.
+		expect(s._mailSends[0].template.data._i18nSkipProcessing).toBe(true);
 		expect(logger.info).toHaveBeenCalled();
 	});
 

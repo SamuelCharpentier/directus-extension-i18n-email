@@ -10,9 +10,10 @@ let notifyInFlight = false;
  * admin-error template so the i18n filter translates it to each admin's
  * language just like any other system email.
  *
- * Recursion guard: if this function is somehow re-entered while
- * already running, the nested call is swallowed. This prevents a
- * runaway loop if the admin-error send itself fails.
+ * Recursion guard: the send is stamped with `_i18nSkipProcessing`, so the
+ * filter returns it untouched — it can never fail validation and can
+ * never trigger a nested alert. The in-process `notifyInFlight` flag is
+ * a second layer for re-entrant calls.
  */
 export async function notifyAdmins(
 	reason: string,
@@ -41,6 +42,7 @@ export async function notifyAdmins(
 					reason,
 					context: JSON.stringify(context, null, 2),
 					timestamp: new Date().toISOString(),
+					_i18nSkipProcessing: true,
 				},
 			},
 		});
@@ -52,12 +54,4 @@ export async function notifyAdmins(
 	} finally {
 		notifyInFlight = false;
 	}
-}
-
-/**
- * Predicate used by the send filter to short-circuit when the email
- * currently being processed IS the admin-error notification itself.
- */
-export function isAdminErrorTemplate(templateName: string | undefined): boolean {
-	return templateName === ADMIN_ERROR_KEY;
 }

@@ -1,6 +1,7 @@
 import type { EmailOptions, ExtensionsServices, SchemaOverview } from '@directus/types';
 import type { Logger } from './types';
 import {
+	canonicalizeLang,
 	fetchDefaultLang,
 	fetchProjectName,
 	fetchRecipientUser,
@@ -9,7 +10,7 @@ import {
 } from './directus';
 import { applyTranslationsToEmail, extractRecipientEmail } from './email';
 import { validateRequiredVariables } from './registry';
-import { notifyAdmins, isAdminErrorTemplate } from './admin-alert';
+import { notifyAdmins } from './admin-alert';
 import { BASE_LAYOUT_KEY, isSystemTemplateKey } from './constants';
 import { renderLiquidString, renderLiquidStrings } from './liquid';
 import { coerceI18nVariables } from './reconcile';
@@ -23,13 +24,24 @@ export type SendFilterDeps = {
 };
 
 /**
+ * Per-send control keys on `template.data`. They are input, never output:
+ * read at the top of the filter, stripped before validation + Liquid
+ * render, so they can't satisfy a required-variable check or leak into
+ * templates.
+ */
+export const I18N_SKIP_PROCESSING = '_i18nSkipProcessing';
+export const I18N_LANGUAGE_OVERRIDE = '_i18nLanguageOverride';
+
+/**
  * The `email.send` filter body.
  *
- * 1. Resolve recipient language (user → settings → env → 'en').
- * 2. Fetch template + translation for that language (with fallback).
- * 3. Validate required variables.
- * 4. For protected system emails, hydrate `user` from directus_users.
- * 5. Inject i18n + base strings + subject + sender (name/address per
+ * 1. Read + strip `_i18n*` control keys (`_i18nSkipProcessing` returns
+ *    the input untouched).
+ * 2. Resolve recipient language (override → user → default).
+ * 3. Fetch template + translation for that language (with fallback).
+ * 4. Validate required variables.
+ * 5. For protected system emails, hydrate `user` from directus_users.
+ * 6. Inject i18n + base strings + subject + sender (name/address per
  *    translation fallback, only when the caller passed no from) into
  *    the email.
  *
@@ -42,7 +54,20 @@ export async function runSendFilter(
 	const { services, getSchema, logger, env } = deps;
 	const templateName = input.template?.name;
 	if (!templateName) return input;
-	if (isAdminErrorTemplate(templateName)) return input;
+
+	// Control keys live directly on template.data (never inside i18n.*,
+	// which is filter output). They are read here, then stripped before
+	// validation + Liquid render so they never leak into templates.
+	const data = (input.template?.data ?? {}) as Record<string, unknown>;
+	const skipProcessing = data[I18N_SKIP_PROCESSING] === true;
+	if (skipProcessing) return input;
+
+	delete data[I18N_SKIP_PROCESSING];
+	const langOverride =
+		typeof data[I18N_LANGUAGE_OVERRIDE] === 'string'
+			? canonicalizeLang(data[I18N_LANGUAGE_OVERRIDE])
+			: null;
+	delete data[I18N_LANGUAGE_OVERRIDE];
 
 	try {
 		const schema = await getSchema();
@@ -50,9 +75,9 @@ export async function runSendFilter(
 		const [defaultLang, userLang, projectName] = await Promise.all([
 			fetchDefaultLang(services, schema, env),
 			recipientEmail ? fetchUserLang(recipientEmail, services, schema) : null,
-			fetchProjectName(services, schema),
+			fetchProjectName(services, schema, env),
 		]);
-		const effectiveLang = userLang ?? defaultLang;
+		const effectiveLang = langOverride ?? userLang ?? defaultLang;
 
 		const resolved = await fetchTemplateWithTranslation(
 			templateName,
@@ -68,7 +93,6 @@ export async function runSendFilter(
 		const { row, translation } = resolved;
 
 		// Required-variable validation.
-		const data = (input.template?.data ?? {}) as Record<string, unknown>;
 		const validation = await validateRequiredVariables(templateName, data, services, schema);
 		if (!validation.ok) {
 			const reason = `Missing required variable(s) for template "${templateName}"`;
@@ -80,6 +104,7 @@ export async function runSendFilter(
 				{
 					template: templateName,
 					language: translation?.languages_code ?? effectiveLang,
+					...(langOverride ? { languageOverride: langOverride } : {}),
 					missing: validation.missing,
 					recipient: recipientEmail,
 				},

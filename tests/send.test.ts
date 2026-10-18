@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { makeServices, makeLogger, makeSchema } from './helpers';
 import { runSendFilter } from '../src/send';
 
@@ -123,11 +123,66 @@ describe('runSendFilter', () => {
 		expect(out).toBe(input);
 	});
 
-	it('passes through admin-error template', async () => {
+	it('treats admin-error like any other template when not stamped', async () => {
 		const s = buildServices();
-		const input: any = mkInput({ template: { name: 'admin-error', data: {} } });
+		const input = mkInput({ template: { name: 'admin-error', data: {} } });
+		await runSendFilter(input as any, deps(s));
+		// No admin-error row in the mock stores → normal "unknown template" path.
+		expect(logger.info).toHaveBeenCalledWith(expect.stringContaining('No DB template'));
+	});
+
+	it('returns skipped sends untouched and touches no services', async () => {
+		const s = buildServices({ withUser: true });
+		const spy = vi.spyOn(s, 'ItemsService');
+		const input: any = mkInput({
+			template: {
+				name: 'password-reset',
+				data: { url: 'https://x', _i18nSkipProcessing: true },
+			},
+		});
 		const out = await runSendFilter(input, deps(s));
 		expect(out).toBe(input);
+		expect(spy).not.toHaveBeenCalled();
+		expect(logger.info).not.toHaveBeenCalled();
+	});
+
+	it('strips control keys so they never reach validation or render', async () => {
+		const s = buildServices({ withUser: false });
+		const input = mkInput({
+			template: {
+				name: 'password-reset',
+				data: { url: 'https://x', _i18nSkipProcessing: false, _i18nLanguageOverride: 'fr' },
+			},
+		});
+		await runSendFilter(input as any, deps(s));
+		expect(input.template.data._i18nSkipProcessing).toBeUndefined();
+		expect(input.template.data._i18nLanguageOverride).toBeUndefined();
+		// The 'fr' override drove selection (stripped afterwards).
+		expect(input.subject).toBe('Réinit');
+	});
+
+	it('prefers the per-send language override over user and default langs', async () => {
+		const s = buildServices({ withUser: true });
+		const input = mkInput({
+			template: {
+				name: 'password-reset',
+				data: { url: 'https://x', _i18nLanguageOverride: 'en' },
+			},
+		});
+		await runSendFilter(input as any, deps(s));
+		expect(input.subject).toBe('Reset');
+	});
+
+	it('ignores an invalid language override and falls back', async () => {
+		const s = buildServices({ withUser: true });
+		const input = mkInput({
+			template: {
+				name: 'password-reset',
+				data: { url: 'https://x', _i18nLanguageOverride: '!!' },
+			},
+		});
+		await runSendFilter(input as any, deps(s));
+		expect(input.subject).toBe('Réinit');
 	});
 
 	it('passes through unknown template name', async () => {
