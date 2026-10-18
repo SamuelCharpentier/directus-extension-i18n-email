@@ -73,7 +73,7 @@ Bootstrap behaviour is controlled by `I18N_EMAIL_BOOTSTRAP`:
 On a fresh DB the extension will:
 
 1. Create the `languages`, `email_templates`, `email_template_translations`, `email_template_variables`, `email_template_sync_audit`, and `email_extension_user_prefs` collections (and the relations between them) if missing.
-2. Pin the project default language when `DEFAULT_LANGUAGE` is set (see below), before seeding.
+2. Pin the project default language when `DEFAULT_LANGUAGE` is set, and the project name when `DEFAULT_PROJECT_NAME` is set (see below), before seeding.
 3. Seed the `languages` collection from the project's default language (`DEFAULT_LANGUAGE` → `directus_settings.default_language`). If the default isn't `en-US`, an `en-US` row is also seeded so the suggested English copy has a home. Each row's `name` is auto-populated from `code` via `Intl.DisplayNames` (e.g. `fr-FR` → "French (France)") and used as the tab label in the translations interface. If `languages` is already populated, bootstrap leaves it alone.
 4. Seed protected system templates (`base`, `password-reset`, `user-invitation`, `user-registration`, `admin-error`) — one `email_templates` row each, then one `email_template_translations` row per template per seeded language: an empty placeholder for the project's default language, plus the English suggested copy when that default isn't `en-US`.
 5. Seed required-variable entries in `email_template_variables` for the system templates.
@@ -95,7 +95,7 @@ The bootstrap also runs a graceful field/relation migration on every boot — it
 
 The extension registers an `email.send` filter. For every outgoing email:
 
-1. Resolves the recipient's language (full BCP-47): `directus_users.language` of the recipient → `DEFAULT_LANGUAGE` → `directus_settings.default_language` → `I18N_EMAIL_FALLBACK_LANG` → `en-US`.
+1. Resolves the recipient's language (full BCP-47): per-send `_i18nLanguageOverride` on `template.data` → `directus_users.language` of the recipient → `DEFAULT_LANGUAGE` → `directus_settings.default_language` → `I18N_EMAIL_FALLBACK_LANG` → `en-US`. A `template.data._i18nSkipProcessing: true` flag skips the whole pipeline and passes the email through to MailService untouched.
 2. Fetches the active `email_templates` row for `template_key = template.name` plus its `email_template_translations` row for the effective language. Falls back to the default-language translation when the effective-language row is missing or is the empty-placeholder shape (blank subject AND empty/null `i18n_variables.in_template`).
 3. Validates required variables from `email_template_variables`. Missing variables abort the send and trigger an admin notification.
 4. Pre-renders the translation's `subject`, `from_name`, `from_address`, and every value in its `i18n_variables.in_template` map through Liquid using the same data context the body will see. Only the `in_template` half is sent — `unused` entries are kept in the DB for re-use but never reach the recipient.
@@ -104,6 +104,13 @@ The extension registers an `email.send` filter. For every outgoing email:
 7. Injects the rendered values into the email: `subject`, the sender (`from`) when the caller didn't supply one, and `template.data.i18n.*`.
 
 Templates whose `template.name` doesn't match any active DB row pass through untouched — Directus's native renderer handles them.
+
+### Per-send `_i18n*` controls
+
+Two control keys live directly on `template.data` (never inside `i18n.*`, which is filter output, not input). They are read at the top of the filter and stripped before validation and Liquid render, so they never satisfy a required-variable check or leak into templates:
+
+- **`_i18nSkipProcessing: true`** — public escape hatch for raw MailService passthrough (debugging, untranslatable one-offs). No fetch, no validation, no admin alert. The extension stamps its own internal `admin-error` sends with it, so a failing alert send can never trigger a nested alert.
+- **`_i18nLanguageOverride: "<BCP-47>"`** — per-send locale, highest precedence in language resolution. Invalid values are ignored silently (fall through to the normal chain).
 
 ### Variable reconciliation
 
@@ -165,7 +172,7 @@ Two translation fields control the sender per language:
 
 | Field          | Purpose                                                                                                       |
 | -------------- | ------------------------------------------------------------------------------------------------------------- |
-| `from_name`    | Sender display name for this language (Liquid-rendered). Falls back to `I18N_EMAIL_FALLBACK_FROM_NAME` → `directus_settings.project_name`. |
+| `from_name`    | Sender display name for this language (Liquid-rendered). Falls back to `I18N_EMAIL_FALLBACK_FROM_NAME` → `DEFAULT_PROJECT_NAME` → `directus_settings.project_name` → `Directus`. |
 | `from_address` | Sender **address** for this language (bare email, Liquid-rendered) — e.g. `no-reply@sympothetford.com` in English, `sans-reponse@sympothetford.com` in French. Falls back to `EMAIL_FROM`. |
 
 Both fields follow the same fallback chain, applied independently: the effective-language translation → the default-language translation → the env/fallback value.
@@ -223,8 +230,9 @@ Extension-specific:
 | ------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------ |
 | `I18N_EMAIL_BOOTSTRAP`          | `full`  | `full` \| `schema` \| `off` — see [First Boot](#first-boot). Use `schema` on prod when data is owned by schema-sync. |
 | `DEFAULT_LANGUAGE`              | —       | BCP-47 tag written into `directus_settings.default_language` on boot when it differs. Env wins, so it is enforced on every restart. Also the first choice for the seed language. |
+| `DEFAULT_PROJECT_NAME`          | —       | Project name written into `directus_settings.project_name` on boot when it differs. Env wins. Falls back to settings, then `Directus`. Feeds the sender display name when no `from_name` resolves. |
 | `I18N_EMAIL_FALLBACK_LANG`      | `en-US` | BCP-47 tag used at send time when both `DEFAULT_LANGUAGE` and `directus_settings.default_language` are unset. |
-| `I18N_EMAIL_FALLBACK_FROM_NAME` | —       | Display name used when a translation row has no `from_name`. Falls back to `directus_settings.project_name`. |
+| `I18N_EMAIL_FALLBACK_FROM_NAME` | —       | Display name used when a translation row has no `from_name`. Falls back to `DEFAULT_PROJECT_NAME` → `directus_settings.project_name` → `Directus`. |
 
 <br />
 
@@ -467,8 +475,9 @@ The body file at `EMAIL_TEMPLATES_PATH/order-shipped.liquid` is created automati
 
 For each outgoing email, the effective language is the first non-null of:
 
-1. **User language** — `directus_users.language` of the recipient (full BCP-47, e.g. `fr-CA`).
-2. **Project default** — `DEFAULT_LANGUAGE` env → `directus_settings.default_language` (full BCP-47).
+1. **Per-send override** — `template.data._i18nLanguageOverride` (canonicalized BCP-47; invalid values ignored).
+2. **User language** — `directus_users.language` of the recipient (full BCP-47, e.g. `fr-CA`).
+3. **Project default** — `DEFAULT_LANGUAGE` env → `directus_settings.default_language` (full BCP-47).
 3. **`I18N_EMAIL_FALLBACK_LANG`** — used when the project default is null.
 4. **`en-US`** — hard-coded last resort.
 
