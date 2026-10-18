@@ -18,7 +18,7 @@ import {
 	localizeLangCode,
 	capitalizeFirst,
 } from './directus';
-import { ensureDefaultLanguage } from './default-language';
+import { ensureDefaultLanguage, ensureDefaultProjectName } from './default-language';
 import { templateId, translationId, variableId } from './ids';
 import { buildInitialStrings, coerceI18nVariables } from './reconcile';
 import { readTemplateFromDisk, syncTemplateBody } from './sync';
@@ -794,8 +794,9 @@ export async function runBootstrap(
 			await migrateRelationsMeta(services, schema, logger);
 			schema = await getSchema();
 
-			// Pin the project default language from env before any seeding.
+			// Pin project defaults from env before any seeding.
 			await ensureDefaultLanguage(services, schema, env, logger);
+			await ensureDefaultProjectName(services, schema, env, logger);
 
 			if (mode === 'schema') {
 				logger.info('[i18n-email] Seeding skipped (I18N_EMAIL_BOOTSTRAP=schema).');

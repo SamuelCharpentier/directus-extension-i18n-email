@@ -1087,6 +1087,26 @@ describe('runBootstrap', () => {
 		expect(s._stores.languages!.map((r: any) => r.code)).toEqual(['fr-CA']);
 	});
 
+	it('applies the project-name pin in schema mode without seeding', async () => {
+		const s = makeServices({
+			settings: {
+				readSingleton: async () => ({ project_name: 'Directus', default_language: 'en-US' }),
+			},
+		});
+		const logger = makeLogger();
+		await runBootstrap(
+			dir,
+			s as any,
+			getSchema,
+			{ I18N_EMAIL_BOOTSTRAP: 'schema', DEFAULT_PROJECT_NAME: 'Sympo' },
+			logger,
+		);
+		expect(s._settingsUpserts).toEqual([
+			{ payload: { project_name: 'Sympo' }, opts: { emitEvents: false } },
+		]);
+		expect(s._stores.languages?.length ?? 0).toBe(0);
+	});
+
 	describe('legacy archive_field migration', () => {
 		it('clears the archive keys when archive_field is is_active', async () => {
 			const s = makeServices({

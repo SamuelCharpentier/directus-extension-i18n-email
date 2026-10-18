@@ -86,7 +86,7 @@ export async function fetchDefaultLang(
 }
 
 /** Canonicalize a BCP-47 tag (e.g. `fr-ca` → `fr-CA`); null when invalid. */
-function canonicalizeLang(value: unknown): string | null {
+export function canonicalizeLang(value: unknown): string | null {
 	if (typeof value !== 'string' || value.trim().length === 0) return null;
 	try {
 		return Intl.getCanonicalLocales(value.trim())[0] ?? null;
@@ -112,11 +112,18 @@ export async function fetchUserLang(
 export async function fetchProjectName(
 	services: ExtensionsServices,
 	schema: SchemaOverview,
+	env: Record<string, unknown> = {},
 ): Promise<string | null> {
+	const envName =
+		typeof env['DEFAULT_PROJECT_NAME'] === 'string' && env['DEFAULT_PROJECT_NAME'].trim()
+			? env['DEFAULT_PROJECT_NAME'].trim()
+			: null;
+	if (envName) return envName;
 	const settings = new services.SettingsService({ schema, accountability: null });
 	const result = await settings.readSingleton({ fields: ['project_name'] });
 	const name = result['project_name'];
-	return typeof name === 'string' && name.length > 0 ? name : null;
+	if (typeof name === 'string' && name.length > 0) return name;
+	return 'Directus';
 }
 
 /**

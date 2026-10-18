@@ -91,11 +91,19 @@ describe('fetchProjectName', () => {
 		const s = makeServices({
 			settings: { readSingleton: async () => ({ project_name: 'Acme' }) },
 		});
-		expect(await fetchProjectName(s as any, makeSchema())).toBe('Acme');
+		expect(await fetchProjectName(s as any, makeSchema(), {})).toBe('Acme');
 	});
-	it('returns null when missing', async () => {
+	it('prefers DEFAULT_PROJECT_NAME over settings', async () => {
+		const s = makeServices({
+			settings: { readSingleton: async () => ({ project_name: 'Acme' }) },
+		});
+		expect(
+			await fetchProjectName(s as any, makeSchema(), { DEFAULT_PROJECT_NAME: 'Sympo' }),
+		).toBe('Sympo');
+	});
+	it('falls back to Directus when unset everywhere', async () => {
 		const s = makeServices({ settings: { readSingleton: async () => ({ project_name: '' }) } });
-		expect(await fetchProjectName(s as any, makeSchema())).toBeNull();
+		expect(await fetchProjectName(s as any, makeSchema(), {})).toBe('Directus');
 	});
 });
 

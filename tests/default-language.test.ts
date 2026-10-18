@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { makeServices, makeLogger, makeSchema } from './helpers';
-import { ensureDefaultLanguage } from '../src/default-language';
+import { ensureDefaultLanguage, ensureDefaultProjectName } from '../src/default-language';
 import { fetchDefaultLang } from '../src/directus';
 
 describe('ensureDefaultLanguage', () => {
@@ -100,5 +100,48 @@ describe('fetchDefaultLang precedence', () => {
 		expect(await fetchDefaultLang(s as any, makeSchema(), { DEFAULT_LANGUAGE: '!!' })).toBe(
 			'fr-CA',
 		);
+	});
+});
+
+describe('ensureDefaultProjectName', () => {
+	it('is a no-op when DEFAULT_PROJECT_NAME is unset', async () => {
+		const s = makeServices();
+		const logger = makeLogger();
+		expect(await ensureDefaultProjectName(s as any, makeSchema(), {}, logger)).toBeNull();
+		expect(s._settingsUpserts.length).toBe(0);
+	});
+
+	it('writes when the env value differs from settings', async () => {
+		const s = makeServices({
+			settings: { readSingleton: async () => ({ project_name: 'Directus' }) },
+		});
+		const logger = makeLogger();
+		const out = await ensureDefaultProjectName(
+			s as any,
+			makeSchema(),
+			{ DEFAULT_PROJECT_NAME: 'Sympo' },
+			logger,
+		);
+		expect(out).toBe('Sympo');
+		expect(s._settingsUpserts).toEqual([
+			{ payload: { project_name: 'Sympo' }, opts: { emitEvents: false } },
+		]);
+		expect(logger.info).toHaveBeenCalledWith(expect.stringContaining('Set project name'));
+	});
+
+	it('does not write when settings already match', async () => {
+		const s = makeServices({
+			settings: { readSingleton: async () => ({ project_name: 'Sympo' }) },
+		});
+		const logger = makeLogger();
+		expect(
+			await ensureDefaultProjectName(
+				s as any,
+				makeSchema(),
+				{ DEFAULT_PROJECT_NAME: 'Sympo' },
+				logger,
+			),
+		).toBe('Sympo');
+		expect(s._settingsUpserts.length).toBe(0);
 	});
 });
